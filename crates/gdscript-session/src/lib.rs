@@ -439,8 +439,29 @@ mod tests {
         );
         let diags = s.diagnostics("file:///main.gd");
         assert_eq!(diags[0]["code"], "INTEGER_DIVISION");
+        // A non-rendering-hint diagnostic omits the `tags` key entirely — the pre-tag wire
+        // shape, so old consumers see no change.
+        assert!(diags[0].get("tags").is_none(), "{diags}");
         let syms = s.document_symbols("file:///main.gd");
         assert_eq!(syms[0]["name"], "f");
+    }
+
+    #[test]
+    fn unused_variable_diagnostic_carries_the_lsp_tag_number() {
+        let mut s = Session::new();
+        s.open(
+            "file:///unused.gd",
+            "func f() -> void:\n\tvar unused = 1\n",
+            None,
+        );
+        let diags = s.diagnostics("file:///unused.gd");
+        let unused = diags
+            .as_array()
+            .and_then(|a| a.iter().find(|d| d["code"] == "UNUSED_VARIABLE"))
+            .expect("an UNUSED_VARIABLE diagnostic");
+        // The LSP `DiagnosticTag` NUMBER (1 = Unnecessary) crosses the JSON surface verbatim,
+        // so protocol clients forward it without a mapping table.
+        assert_eq!(unused["tags"], json!([1]), "{unused}");
     }
 
     #[test]

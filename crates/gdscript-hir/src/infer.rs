@@ -603,6 +603,7 @@ pub fn analyze_file(db: &dyn Db, api: &EngineApi, root: &GdNode, file_id: FileId
                 message: format!("Class \"{name}\" hides {kind}."),
                 source: DiagnosticSource::Type,
                 fixes: Vec::new(),
+                tags: Vec::new(),
             });
         }
         // CONFUSABLE_IDENTIFIER on the `class_name` itself (gated, unlike the hides-global check).
@@ -636,6 +637,7 @@ pub fn analyze_file(db: &dyn Db, api: &EngineApi, root: &GdNode, file_id: FileId
             message: "Cyclic class hierarchy: this class's `extends` chain returns to itself."
                 .to_owned(),
             source: DiagnosticSource::Type,
+            tags: Vec::new(),
             fixes: Vec::new(),
         });
     }
@@ -1464,6 +1466,7 @@ impl Cx<'_> {
             message,
             source: DiagnosticSource::Type,
             fixes: Vec::new(),
+            tags: Vec::new(),
         });
     }
 

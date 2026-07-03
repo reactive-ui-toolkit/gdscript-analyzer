@@ -73,6 +73,39 @@ pub enum DiagnosticSource {
     Type,
 }
 
+/// An LSP-aligned diagnostic tag — a rendering hint editors apply on top of the severity.
+/// Serialized as the LSP `DiagnosticTag` NUMBER (`1` / `2`) so protocol clients forward it
+/// without a mapping table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiagnosticTag {
+    /// Unused or unreachable code — editors render it faded/dimmed (LSP value `1`).
+    Unnecessary,
+    /// Deprecated code — editors render it struck through (LSP value `2`).
+    Deprecated,
+}
+
+impl Serialize for DiagnosticTag {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Unnecessary => 1u8,
+            Self::Deprecated => 2u8,
+        }
+        .serialize(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for DiagnosticTag {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        match u8::deserialize(d)? {
+            1 => Ok(Self::Unnecessary),
+            2 => Ok(Self::Deprecated),
+            other => Err(serde::de::Error::custom(format!(
+                "unknown DiagnosticTag value {other} (expected 1 or 2)"
+            ))),
+        }
+    }
+}
+
 /// A diagnostic with a byte range, a stable machine code, a severity, and a message.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Diagnostic {
@@ -91,6 +124,11 @@ pub struct Diagnostic {
     /// Quick-fixes offered for this diagnostic (e.g. "add type annotation"). Empty when none.
     #[serde(default)]
     pub fixes: Vec<CodeAction>,
+    /// LSP-aligned rendering tags ([`DiagnosticTag`]) — `Unnecessary` on the unused/unreachable
+    /// family so editors dim it. Omitted from JSON when empty, so pre-tag serialized
+    /// diagnostics and consumers round-trip unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<DiagnosticTag>,
 }
 
 /// The kind of a document symbol (a subset of LSP `SymbolKind`, named for GDScript).

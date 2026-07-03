@@ -12,7 +12,7 @@
 //! is unchanged — the enum is internal to `gdscript-hir`.
 
 use cstree::util::NodeOrToken;
-use gdscript_base::{Diagnostic, DiagnosticSource, Severity, TextRange};
+use gdscript_base::{Diagnostic, DiagnosticSource, DiagnosticTag, Severity, TextRange};
 use gdscript_syntax::{GdNode, SyntaxKind};
 use rustc_hash::FxHashMap;
 
@@ -333,6 +333,23 @@ impl WarningCode {
     #[must_use]
     pub fn setting_name(self) -> String {
         self.as_str().to_ascii_lowercase()
+    }
+
+    /// The LSP rendering tags this code's diagnostics carry: `Unnecessary` (editors dim the
+    /// range) for the unused/unreachable family, matching VS Code's built-in convention.
+    /// No catalog code is `Deprecated`-tagged today; the arm exists for when one is.
+    #[must_use]
+    pub fn tags(self) -> &'static [DiagnosticTag] {
+        match self {
+            Self::UnusedVariable
+            | Self::UnusedLocalConstant
+            | Self::UnusedPrivateClassVariable
+            | Self::UnusedParameter
+            | Self::UnusedSignal
+            | Self::UnreachableCode
+            | Self::UnreachablePattern => &[DiagnosticTag::Unnecessary],
+            _ => &[],
+        }
     }
 
     /// A one-line human description — the source of truth for the generated Warning Reference
@@ -798,6 +815,7 @@ pub fn gate(
         message: raw.message.clone(),
         source: DiagnosticSource::Type,
         fixes: Vec::new(),
+        tags: raw.code.tags().to_vec(),
     })
 }
 
@@ -1013,6 +1031,20 @@ mod tests {
             code,
             message: "msg".to_owned(),
         }
+    }
+
+    #[test]
+    fn unused_and_unreachable_diagnostics_carry_the_unnecessary_tag() {
+        let none = SuppressionMap::default();
+        let s = WarningSettings::analyzer_default();
+        for code in [WarningCode::UnusedVariable, WarningCode::UnreachableCode] {
+            let d = gate(&raw(code), &s, &none, None).unwrap();
+            assert_eq!(d.tags, vec![gdscript_base::DiagnosticTag::Unnecessary]);
+        }
+        // A non-rendering-hint code carries none. (The wire shape — `tags: [1]` present /
+        // omitted when empty — is pinned at the session layer, where JSON crossing happens.)
+        let plain = gate(&raw(WarningCode::IntegerDivision), &s, &none, None).unwrap();
+        assert!(plain.tags.is_empty());
     }
 
     #[test]

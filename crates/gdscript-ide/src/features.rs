@@ -38,6 +38,7 @@ pub fn diagnostics(db: &dyn Db, file: FileText) -> Vec<Diagnostic> {
             message: e.message.clone(),
             source: DiagnosticSource::Syntax,
             fixes: Vec::new(),
+            tags: Vec::new(),
         })
         .collect()
 }
