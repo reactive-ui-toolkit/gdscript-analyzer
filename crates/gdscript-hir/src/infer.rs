@@ -1736,6 +1736,14 @@ impl Cx<'_> {
 
     fn infer_local_var(&mut self, v: &body::LocalVar) {
         let annotated = v.type_ref.map(|p| self.resolve_ptr_ty(p));
+        // The declared name is visible to its own initializer's LAMBDA bodies: `var f =
+        // func(): f.call()` is legal GDScript (the closure captures `f`), and parser
+        // recovery can swallow trailing statements into a broken initializer's inline body
+        // (the unclosed-paren G8 shape — `var toggle = func(broken: pass` absorbs the rest
+        // of the function). Both must resolve the name instead of cascading a false
+        // UNDEFINED_IDENTIFIER on legal code / on top of the syntax error. Seam-typed
+        // (`Unknown` claims nothing downstream) until the real binding type lands below.
+        self.locals.insert(v.name.clone(), Ty::Unknown);
         let init_ty = v.init.map(|e| {
             let expected = annotated
                 .as_ref()

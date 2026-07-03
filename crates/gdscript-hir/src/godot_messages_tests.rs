@@ -644,6 +644,25 @@ fn variadic_calls_never_arity_error() {
     assert_absent(&m, "TOO_FEW_ARGUMENTS");
 }
 
+#[test]
+fn lambda_capturing_its_own_declaration_is_legal() {
+    // `var f = func(): f.call()` compiles in Godot — the closure captures `f`. The name must
+    // be visible to its own initializer's lambda body (it is seam-typed during inference).
+    let m = project_msgs("func t() -> void:\n\tvar f = func(): f.call()\n\tf.call()\n");
+    assert_absent(&m, "UNDEFINED_IDENTIFIER");
+}
+
+#[test]
+fn declaration_with_unparsable_initializer_still_binds_its_name() {
+    // The G8 guard (guitkx T4.5): `var toggle = func(broken: pass` must still bind `toggle`
+    // (Godot reports ONLY the syntax error here — probed p16), so a later use never cascades
+    // a false UNDEFINED_IDENTIFIER on top of it. The guitkx LSP deletes its veto-suppression
+    // hack on the strength of this invariant — keep it pinned.
+    let m = project_msgs("func t() -> void:\n\tvar toggle = func(broken: pass\n\tprint(toggle)\n");
+    assert_absent(&m, "UNDEFINED_IDENTIFIER");
+    assert_absent(&m, "UNDEFINED_FUNCTION");
+}
+
 // ---- negative cases: the analyzer must be silent exactly where Godot is ---------------------
 
 #[test]
