@@ -142,7 +142,9 @@ pub enum WarningCode {
     /// A method call on a BUILT-IN receiver (`Callable`, `String`, `Vector2`, …) whose method does
     /// not exist. Builtin member tables are closed and bundled, so — unlike `Object` receivers,
     /// where a script can attach methods at runtime — this needs NO workspace-completeness claim:
-    /// Godot itself reports it as a compile error (`Function "casll()" not found in base Callable`).
+    /// Godot itself reports it as a compile error. 4.7 prints BOTH `Cannot find member "casll" in
+    /// base "Callable".` and `Function "casll()" not found in base Callable.` for one miss (its
+    /// member- and call-checks each fire); the analyzer emits the latter, one diagnostic per site.
     UndefinedMethod,
     /// A property/constant access on a BUILT-IN receiver that does not exist (`v.zzz` on a
     /// `Vector2`). Same closed-table reasoning as [`Self::UndefinedMethod`].

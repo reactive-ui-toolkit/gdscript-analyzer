@@ -172,14 +172,27 @@ impl FlowFacts {
     }
 }
 
+/// Why a statement is unreachable — drives the `UNREACHABLE_CODE` message: Godot's own analyzer
+/// only flags (and phrases) the after-`return` case, so that cause reproduces Godot's exact text
+/// while the other divergences (after `break`/`continue`, mixed-exit `if`s) keep the analyzer's
+/// more precise wording (Godot is silent there — verified on 4.7, probes q04/q05/r42).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnreachableCause {
+    /// Every diverging path of the preceding statement ends in a `return`.
+    AfterReturn,
+    /// A `break`/`continue` or a divergence with non-`return` exits.
+    Other,
+}
+
 /// The result of flowing a body: per-statement entry facts + the statements proven unreachable.
 #[derive(Debug, Clone, Default)]
 pub struct FlowAnalysis {
     /// Facts holding *before* each reachable statement. A statement absent here is either
     /// unreachable or carries no narrowing — the checker treats both as "no facts".
     entry_facts: FxHashMap<StmtId, FlowFacts>,
-    /// The first statement of each maximal unreachable run (the `UNREACHABLE_CODE` anchors).
-    unreachable_anchors: Vec<StmtId>,
+    /// The first statement of each maximal unreachable run (the `UNREACHABLE_CODE` anchors),
+    /// with the cause of the divergence that precedes it.
+    unreachable_anchors: Vec<(StmtId, UnreachableCause)>,
     /// The byte ranges of `match` arms that follow an unconditional catch-all (the
     /// `UNREACHABLE_PATTERN` anchors). Stored as ranges (an arm is not a `StmtId`).
     unreachable_pattern_anchors: Vec<TextRange>,
@@ -192,12 +205,13 @@ impl FlowAnalysis {
         self.entry_facts.get(&stmt)
     }
 
-    /// The byte ranges of the unreachable-code anchors (Workstream 1 emits `UNREACHABLE_CODE` here).
+    /// The byte ranges of the unreachable-code anchors (Workstream 1 emits `UNREACHABLE_CODE`
+    /// here), each with the divergence cause that selects the message wording.
     #[must_use]
-    pub fn unreachable_ranges(&self, body: &Body) -> Vec<TextRange> {
+    pub fn unreachable_ranges(&self, body: &Body) -> Vec<(TextRange, UnreachableCause)> {
         self.unreachable_anchors
             .iter()
-            .map(|&sid| body.source_map.stmt_range(sid))
+            .map(|&(sid, cause)| (body.source_map.stmt_range(sid), cause))
             .collect()
     }
 
@@ -236,25 +250,56 @@ pub fn analyze(body: &Body) -> FlowAnalysis {
 struct Analyzer<'a> {
     body: &'a Body,
     entry_facts: FxHashMap<StmtId, FlowFacts>,
-    unreachable_anchors: Vec<StmtId>,
+    unreachable_anchors: Vec<(StmtId, UnreachableCause)>,
     unreachable_pattern_anchors: Vec<TextRange>,
 }
 
 impl Analyzer<'_> {
     /// Flow a statement block. Returns the facts that fall through to the next statement, or `None`
     /// if the block diverges (every path `return`s/`break`s/`continue`s). Records the first
-    /// unreachable statement as an anchor.
+    /// unreachable statement as an anchor, with the cause read off the diverging statement.
     fn block(&mut self, facts: FlowFacts, block: &[StmtId]) -> Option<FlowFacts> {
         let mut cur = Some(facts);
+        let mut prev: Option<StmtId> = None;
         for &sid in block {
             let Some(f) = cur else {
                 // The first statement past a divergence anchors `UNREACHABLE_CODE`.
-                self.unreachable_anchors.push(sid);
+                let cause = if prev.is_some_and(|p| self.ends_in_return(p)) {
+                    UnreachableCause::AfterReturn
+                } else {
+                    UnreachableCause::Other
+                };
+                self.unreachable_anchors.push((sid, cause));
                 return None;
             };
             cur = self.stmt(f, sid);
+            prev = Some(sid);
         }
         cur
+    }
+
+    /// Whether a (diverging) statement's exits are `return`-caused: a plain `return`, or an
+    /// `if`/`elif`/`else` whose every branch contains a `return`-caused divergence. `break`/
+    /// `continue` and mixed exits are not — Godot phrases only the after-`return` case, so this
+    /// distinction selects the message. A branch is scanned with `any` (not just its last
+    /// statement) because a `return` mid-branch leaves trailing statements that are themselves
+    /// unreachable (they get their own anchor) while the branch's divergence is still the return.
+    fn ends_in_return(&self, sid: StmtId) -> bool {
+        match self.body.stmt(sid) {
+            Stmt::Return(_) => true,
+            Stmt::If {
+                then_branch,
+                elifs,
+                else_branch,
+                ..
+            } => {
+                let block_returns = |b: &[StmtId]| b.iter().any(|&s| self.ends_in_return(s));
+                else_branch.as_deref().is_some_and(block_returns)
+                    && block_returns(then_branch)
+                    && elifs.iter().all(|(_, b)| block_returns(b))
+            }
+            _ => false,
+        }
     }
 
     /// Flow one statement: record its entry facts, then return the facts that fall through (or
@@ -812,8 +857,46 @@ mod tests {
         let body = func_body("func f():\n\treturn\n\tvar dead := 1\n");
         let a = analyze(&body);
         assert_eq!(a.unreachable_ranges(&body).len(), 1);
-        // The anchor is the `var dead` statement (block index 1).
-        assert_eq!(a.unreachable_anchors, vec![body.block[1]]);
+        // The anchor is the `var dead` statement (block index 1), caused by the `return`.
+        assert_eq!(
+            a.unreachable_anchors,
+            vec![(body.block[1], UnreachableCause::AfterReturn)]
+        );
+    }
+
+    #[test]
+    fn code_after_break_is_unreachable_with_other_cause() {
+        // `break` diverges but is NOT return-caused — Godot is silent here (probed q04), so the
+        // cause keeps the analyzer-extra wording instead of Godot's "(statement after return)".
+        let body = func_body("func f():\n\tfor i in 3:\n\t\tbreak\n\t\tprint(i)\n");
+        let a = analyze(&body);
+        let anchors = &a.unreachable_anchors;
+        assert_eq!(anchors.len(), 1);
+        assert_eq!(anchors[0].1, UnreachableCause::Other);
+    }
+
+    #[test]
+    fn code_after_if_where_every_branch_returns_is_return_caused() {
+        // Godot flags this with the after-return wording (probed r42).
+        let body = func_body(
+            "func f(b):\n\tif b:\n\t\treturn 1\n\telse:\n\t\treturn 2\n\tprint(\"after\")\n",
+        );
+        let a = analyze(&body);
+        let anchors = &a.unreachable_anchors;
+        assert_eq!(anchors.len(), 1);
+        assert_eq!(anchors[0].1, UnreachableCause::AfterReturn);
+    }
+
+    #[test]
+    fn code_after_if_with_a_break_exit_is_other_caused() {
+        // One branch returns, the other breaks — not purely return-caused.
+        let body = func_body(
+            "func f(b):\n\tfor i in 3:\n\t\tif b:\n\t\t\treturn 1\n\t\telse:\n\t\t\tbreak\n\t\tprint(i)\n",
+        );
+        let a = analyze(&body);
+        let anchors = &a.unreachable_anchors;
+        assert_eq!(anchors.len(), 1);
+        assert_eq!(anchors[0].1, UnreachableCause::Other);
     }
 
     #[test]

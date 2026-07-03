@@ -235,7 +235,8 @@ fn collect_escaping_names(body: &Body) -> FxHashSet<SmolStr> {
 #[must_use]
 #[allow(
     clippy::too_many_lines,
-    reason = "the per-body inference orchestration reads best whole"
+    clippy::too_many_arguments,
+    reason = "the per-body inference orchestration reads best whole; the params are the fixed analysis inputs (db/api/tree/scope/body + result shape), not a config to bundle"
 )]
 pub fn infer(
     db: &dyn Db,
@@ -245,6 +246,7 @@ pub fn infer(
     body: &Body,
     return_ty: Ty,
     is_func_body: bool,
+    owner: Option<&str>,
 ) -> InferenceResult {
     let self_ty = class.self_ty.clone();
     let mut cx = Cx {
@@ -264,6 +266,7 @@ pub fn infer(
         narrowing: FxHashMap::default(),
         flow: flow::analyze(body),
         is_func_body,
+        owner,
         assigned: flow::analyze_assigned(
             body,
             &body
@@ -304,6 +307,9 @@ pub fn infer(
     // initializer body would otherwise false-flag every field (the member is read in other methods,
     // not in its own initializer). `_`-prefixed names + loop/match captures are excluded.
     if is_func_body {
+        // Godot's exact wordings (probed on 4.7: p07/p20/q01) — the parameter form names the
+        // enclosing function; the local forms say "in the block".
+        let fn_name = owner.unwrap_or("<anonymous>");
         let unused: Vec<(TextRange, WarningCode, String)> = cx
             .bindings
             .iter()
@@ -311,19 +317,31 @@ pub fn infer(
                 if b.name.starts_with('_') || cx.used_locals.contains(&b.name) {
                     return None;
                 }
-                let (code, what) = match b.kind {
-                    BindingKind::Param => (WarningCode::UnusedParameter, "parameter"),
-                    BindingKind::Var if b.is_const => {
-                        (WarningCode::UnusedLocalConstant, "local constant")
-                    }
-                    BindingKind::Var => (WarningCode::UnusedVariable, "local variable"),
+                let (code, msg) = match b.kind {
+                    BindingKind::Param => (
+                        WarningCode::UnusedParameter,
+                        format!(
+                            "The parameter \"{n}\" is never used in the function \"{fn_name}()\". If this is intended, prefix it with an underscore: \"_{n}\".",
+                            n = b.name
+                        ),
+                    ),
+                    BindingKind::Var if b.is_const => (
+                        WarningCode::UnusedLocalConstant,
+                        format!(
+                            "The local constant \"{n}\" is declared but never used in the block. If this is intended, prefix it with an underscore: \"_{n}\".",
+                            n = b.name
+                        ),
+                    ),
+                    BindingKind::Var => (
+                        WarningCode::UnusedVariable,
+                        format!(
+                            "The local variable \"{n}\" is declared but never used in the block. If this is intended, prefix it with an underscore: \"_{n}\".",
+                            n = b.name
+                        ),
+                    ),
                     BindingKind::ForVar | BindingKind::MatchBind => return None,
                 };
-                Some((
-                    b.name_range,
-                    code,
-                    format!("The {what} \"{}\" is declared but never used.", b.name),
-                ))
+                Some((b.name_range, code, msg))
             })
             .collect();
         for (range, code, msg) in unused {
@@ -375,20 +393,20 @@ pub fn infer(
                 BindingKind::Param if !b.annotated => Some((
                     b.name_range,
                     WarningCode::UntypedDeclaration,
-                    format!("The parameter \"{}\" has no static type.", b.name),
+                    format!("Parameter \"{}\" has no static type.", b.name),
                 )),
                 BindingKind::Var if !b.is_const && b.inferred_colon_eq => Some((
                     b.name_range,
                     WarningCode::InferredDeclaration,
                     format!(
-                        "The variable \"{}\" uses inferred typing (`:=`); consider declaring its type explicitly.",
+                        "Variable \"{}\" has an implicitly inferred static type.",
                         b.name
                     ),
                 )),
                 BindingKind::Var if !b.is_const && !b.annotated => Some((
                     b.name_range,
                     WarningCode::UntypedDeclaration,
-                    format!("The variable \"{}\" has no static type.", b.name),
+                    format!("Variable \"{}\" has no static type.", b.name),
                 )),
                 _ => None,
             })
@@ -400,29 +418,39 @@ pub fn infer(
 
     // CONFUSABLE_IDENTIFIER — a parameter / local binding whose name mixes scripts in a spoofable
     // way (the same UTS #39 check used for member names; ASCII names fast-path out).
-    let confusable_bindings: Vec<TextRange> = cx
+    let confusable_bindings: Vec<(TextRange, SmolStr)> = cx
         .bindings
         .iter()
         .filter(|b| is_confusable_identifier(&b.name))
-        .map(|b| b.name_range)
+        .map(|b| (b.name_range, b.name.clone()))
         .collect();
-    for range in confusable_bindings {
+    for (range, name) in confusable_bindings {
         cx.warn(
             range,
             WarningCode::ConfusableIdentifier,
-            "This identifier uses confusable characters (mixed scripts).".to_owned(),
+            format!(
+                "The identifier \"{name}\" has misleading characters and might be confused with something else."
+            ),
         );
     }
 
-    // UNREACHABLE_CODE — statements after a return/break/continue / exhaustive branch (Workstream 2).
+    // UNREACHABLE_CODE — statements after a return/break/continue / diverging branch (Workstream
+    // 2). Godot only flags — and phrases — the after-`return` case (probes p08/r42 vs q04/q05),
+    // so that cause reproduces its exact text; the other causes are analyzer-extra coverage and
+    // keep a precise wording of their own.
     let unreachable = cx.flow.unreachable_ranges(body);
-    for range in unreachable {
-        cx.warn(
-            range,
-            WarningCode::UnreachableCode,
-            "Unreachable code (statement after a return, break, continue, or an exhaustive match)."
-                .to_owned(),
-        );
+    for (range, cause) in unreachable {
+        let msg = match cause {
+            flow::UnreachableCause::AfterReturn => format!(
+                "Unreachable code (statement after return) in function \"{}()\".",
+                cx.owner.unwrap_or("<anonymous>")
+            ),
+            flow::UnreachableCause::Other => {
+                "Unreachable code (statement after a break, continue, or a diverging branch)."
+                    .to_owned()
+            }
+        };
+        cx.warn(range, WarningCode::UnreachableCode, msg);
     }
 
     // UNREACHABLE_PATTERN — a `match` arm after an unconditional catch-all (Workstream 2).
@@ -431,8 +459,7 @@ pub fn infer(
         cx.warn(
             range,
             WarningCode::UnreachablePattern,
-            "Unreachable pattern: an earlier arm's wildcard (`_`) or `var` binding always matches."
-                .to_owned(),
+            "Unreachable pattern (pattern after wildcard or bind).".to_owned(),
         );
     }
 
@@ -462,7 +489,18 @@ pub fn infer_func(
     // are nested inside the ParamList, so they are not direct children).
     let return_ty = cst::first_child(&node, |k| k == gdscript_syntax::SyntaxKind::TypeRef)
         .map_or(Ty::Variant, |t| resolve::resolve_type_ref(db, api, &t));
-    infer(db, api, root, class, &body, return_ty, true)
+    let owner = cst::first_child(&node, |k| k == gdscript_syntax::SyntaxKind::Name)
+        .map(|n| n.text().to_string());
+    infer(
+        db,
+        api,
+        root,
+        class,
+        &body,
+        return_ty,
+        true,
+        owner.as_deref(),
+    )
 }
 
 /// One inferred unit of a file: a function body or a class field's initializer, with its
@@ -536,17 +574,33 @@ pub fn analyze_file(db: &dyn Db, api: &EngineApi, root: &GdNode, file_id: FileId
     // cross-file firewall (`class_name_collisions`) and the offset-free global resolvers — so it
     // fires only when genuinely shadowing, never on the seam. Emitted once, at the decl's NAME.
     if let Some(name) = tree.class_name.clone() {
-        let collides = collisions_contains(db, &name)
-            || resolve::resolve_global(api, &name).is_some()
-            || is_autoload_singleton(db, &name);
-        if collides && let Some(range) = class_name_decl_range(root) {
+        // Godot's per-kind phrasings ("Class "Node" hides a native class." probed on 4.7, r29;
+        // the script-class/autoload variants follow `gdscript_analyzer.cpp`'s texts — they are
+        // not probeable headless because `--check-only` builds no global-class registry). Godot
+        // hard-ERRORS here; the analyzer keeps Warning severity (documented divergence — a
+        // registry seam false-positive must not block a build).
+        let hides = if resolve::resolve_global(api, &name).is_some() {
+            match resolve::resolve_global(api, &name) {
+                Some(GlobalDef::BuiltinType(_)) => Some("a built-in type"),
+                Some(GlobalDef::Builtin | GlobalDef::Utility) => Some("a built-in function"),
+                Some(_) => Some("a native class"),
+                None => None,
+            }
+        } else if is_autoload_singleton(db, &name) {
+            Some("an autoload singleton")
+        } else if collisions_contains(db, &name) {
+            Some("a global script class")
+        } else {
+            None
+        };
+        if let Some(kind) = hides
+            && let Some(range) = class_name_decl_range(root)
+        {
             diagnostics.push(Diagnostic {
                 range,
                 severity: Severity::Warning,
                 code: SHADOWED_GLOBAL_IDENTIFIER.to_owned(),
-                message: format!(
-                    "The global class \"{name}\" hides a built-in/native/global/autoload."
-                ),
+                message: format!("Class \"{name}\" hides {kind}."),
                 source: DiagnosticSource::Type,
                 fixes: Vec::new(),
             });
@@ -559,7 +613,7 @@ pub fn analyze_file(db: &dyn Db, api: &EngineApi, root: &GdNode, file_id: FileId
                 range,
                 code: WarningCode::ConfusableIdentifier,
                 message: format!(
-                    "The identifier \"{name}\" uses confusable characters (mixed scripts)."
+                    "The identifier \"{name}\" has misleading characters and might be confused with something else."
                 ),
             });
         }
@@ -658,7 +712,7 @@ pub fn analyze_file(db: &dyn Db, api: &EngineApi, root: &GdNode, file_id: FileId
             let body = body::body_of_func(&node);
             let return_ty = cst::first_child(&node, |k| k == gdscript_syntax::SyntaxKind::TypeRef)
                 .map_or(Ty::Variant, |t| resolve::resolve_type_ref(db, api, &t));
-            let result = infer(db, api, root, &class, &body, return_ty, true);
+            let result = infer(db, api, root, &class, &body, return_ty, true, Some(&f.name));
             diagnostics.extend(result.diagnostics.iter().cloned());
             raw_warnings.extend(result.raw_warnings.iter().cloned());
             units.push(Unit {
@@ -740,7 +794,7 @@ fn infer_inner_class_bodies(
             let body = body::body_of_func(&node);
             let return_ty = cst::first_child(&node, |k| k == gdscript_syntax::SyntaxKind::TypeRef)
                 .map_or(Ty::Variant, |t| resolve::resolve_type_ref(db, api, &t));
-            let result = infer(db, api, root, &class, &body, return_ty, true);
+            let result = infer(db, api, root, &class, &body, return_ty, true, Some(&f.name));
             diagnostics.extend(result.diagnostics.iter().cloned());
             raw_warnings.extend(result.raw_warnings.iter().cloned());
             units.push(Unit {
@@ -852,7 +906,7 @@ fn member_level_warnings(
                 range: v.name_range,
                 code: WarningCode::UnusedPrivateClassVariable,
                 message: format!(
-                    "The class variable \"{}\" is never used in this file.",
+                    "The class variable \"{}\" is declared but never used in the class.",
                     v.name
                 ),
             });
@@ -865,10 +919,7 @@ fn member_level_warnings(
             out.push(RawWarning {
                 range: v.name_range,
                 code: WarningCode::OnreadyWithExport,
-                message: format!(
-                    "The member \"{}\" has both `@onready` and `@export`; they conflict.",
-                    v.name
-                ),
+                message: "\"@onready\" will set the default value after \"@export\" takes effect and will override it.".to_owned(),
             });
         }
         // SHADOWED_GLOBAL_IDENTIFIER — a value member (`var`/`const`/`signal`) whose name collides
@@ -890,21 +941,25 @@ fn member_level_warnings(
                 range,
                 code: WarningCode::ConfusableIdentifier,
                 message: format!(
-                    "The identifier \"{name}\" uses confusable characters (mixed scripts)."
+                    "The identifier \"{name}\" has misleading characters and might be confused with something else."
                 ),
             });
         }
         match m {
-            // An enum-typed field with no initializer (the local case is in `infer_local_var`).
+            // An enum-typed field with no initializer — MEMBER-only in Godot (an enum-typed
+            // LOCAL is tracked as UNASSIGNED_VARIABLE instead, see `infer_local_var`), and only
+            // when the enum declares NO `0` value (probed r46: `MouseButton` has `NONE = 0`,
+            // silent; r48: `MouseButtonMask` has none, warns).
             Member::Var(v) if !v.has_init => {
                 if let Some(tref) = &v.type_ref
-                    && matches!(resolve::resolve_type_name(db, api, tref), Ty::Enum(_))
+                    && let Ty::Enum(eref) = resolve::resolve_type_name(db, api, tref)
+                    && enum_lacks_zero(api, &eref)
                 {
                     out.push(RawWarning {
                         range: v.name_range,
                         code: WarningCode::EnumVariableWithoutDefault,
                         message: format!(
-                            "The enum variable \"{}\" has no default value (it defaults to 0, which may not be a valid enum value).",
+                            "The variable \"{}\" has an enum type and does not set an explicit default value. The default will be set to \"0\".",
                             v.name
                         ),
                     });
@@ -921,7 +976,7 @@ fn member_level_warnings(
                         range: s.name_range,
                         code: WarningCode::UnusedSignal,
                         message: format!(
-                            "The signal \"{}\" is never emitted or connected in this file.",
+                            "The signal \"{}\" is declared but never explicitly used in the class.",
                             s.name
                         ),
                     });
@@ -1074,12 +1129,44 @@ fn is_registered_global_class(db: &dyn Db, name: &str) -> bool {
 /// (`Error`/`Key`) are deliberately excluded — they are rare as user identifiers (and the tokenizer
 /// treats the math constants as literals), so this only ever *under*-warns vs. Godot, never a false
 /// positive. With no source root / `project.godot`, the cross-file/autoload arms are silent (seam).
+/// Whether the enum behind `eref` declares NO `0` value — Godot's gate for
+/// `ENUM_VARIABLE_WITHOUT_DEFAULT` (the implicit `0` default is fine when 0 IS a member:
+/// `var e: MouseButton` is silent, `var e: MouseButtonMask` warns — probed r46/r48).
+/// Unresolvable enums (script enums, unknown classes) return `false` so the warning never
+/// fires on a seam.
+fn enum_lacks_zero(api: &EngineApi, eref: &ty::EnumRef) -> bool {
+    let info = match eref.qualified.split_once('.') {
+        None => api.global_enum(&eref.qualified),
+        Some((class, en)) => match resolve::resolve_global(api, class) {
+            Some(GlobalDef::ClassType(cid)) => match api.lookup_member(cid, en) {
+                Some(MemberRef::Enum(e)) => Some(e),
+                _ => None,
+            },
+            _ => None,
+        },
+    };
+    info.is_some_and(|e| !e.values.iter().any(|v| v.value == 0))
+}
+
+/// The name-token range of a class member, for `SHADOWED_VARIABLE`'s "at line N" filler. `None`
+/// for members without a single name token (enums / inner classes never reach the shadow check
+/// as *value* members anyway).
+fn member_name_range(m: &Member) -> Option<TextRange> {
+    match m {
+        Member::Var(v) => Some(v.name_range),
+        Member::Const(c) => Some(c.name_range),
+        Member::Signal(s) => Some(s.name_range),
+        Member::Func(f) => Some(f.name_range),
+        _ => None,
+    }
+}
+
 fn shadowed_global_kind(db: &dyn Db, api: &EngineApi, name: &str) -> Option<&'static str> {
     match resolve::resolve_global(api, name) {
         Some(GlobalDef::Builtin | GlobalDef::Utility) => return Some("built-in function"),
         Some(GlobalDef::BuiltinType(_)) => return Some("built-in type"),
-        Some(GlobalDef::ClassType(_)) => return Some("native class"),
-        Some(GlobalDef::Singleton(_)) => return Some("engine singleton"),
+        // Godot's `is_shadowing` labels engine singletons as native classes too (probed r41).
+        Some(GlobalDef::ClassType(_) | GlobalDef::Singleton(_)) => return Some("native class"),
         // Bare pseudo-constants / global enums: intentionally not flagged (see doc above).
         Some(GlobalDef::Const(_) | GlobalDef::GlobalEnum) | None => {}
     }
@@ -1216,12 +1303,21 @@ fn unit_from_decl(
 ) -> Option<Unit> {
     let node = ptr.to_node(root)?;
     let body = body::body_of_decl_stmt(&node);
-    let result = infer(db, api, root, class, &body, Ty::Variant, false);
+    let result = infer(db, api, root, class, &body, Ty::Variant, false, None);
     Some(Unit {
         range,
         body,
         result,
     })
+}
+
+/// The syntactic context of an assignability check — selects the verb of Godot's generic
+/// type-mismatch text (`Cannot assign a value of type "A" as "B".` / `Cannot return a value of
+/// type "A" as "B".`, probed p05/q28/p36).
+#[derive(Clone, Copy)]
+enum AssignCtx {
+    Assign,
+    Return,
 }
 
 /// What type is expected of an expression (bidirectional checking).
@@ -1277,15 +1373,21 @@ struct Cx<'a> {
     /// body-only checks (`UNUSED_*`, `SHADOWED_VARIABLE`) so a field initializer doesn't, e.g.,
     /// "shadow itself" against its own member entry.
     is_func_body: bool,
+    /// The declared name of the function whose body this is (`None` for a field-initializer
+    /// body). Godot bakes it into `UNUSED_PARAMETER` / after-`return` `UNREACHABLE_CODE`
+    /// messages (`… in the function "t()".`), so the wording needs it. A lambda inherits the
+    /// enclosing function's name (its bindings live in the same body arena).
+    owner: Option<&'a str>,
     /// Definite-assignment facts (Workstream 2) — the locals assigned before each statement, for
     /// `UNASSIGNED_VARIABLE`. Consulted at a read via [`Cx::cur_stmt`].
     assigned: flow::AssignedAnalysis,
     /// The statement currently being inferred (set in `infer_stmt`), so a read can look up
     /// [`Cx::assigned`].
     cur_stmt: Option<body::StmtId>,
-    /// Typed locals declared **without** an initializer — the only locals `UNASSIGNED_VARIABLE`
-    /// considers (an untyped/`:=`/initialized local is never read-before-assign). Grows as the walk
-    /// passes each declaration.
+    /// UNTYPED locals declared **without** an initializer — the only locals `UNASSIGNED_VARIABLE`
+    /// considers. Godot 4 zero-initializes a *typed* `var x: int` (reading it is fine, probed
+    /// q11); only the untyped `var x` holds "nil until first assignment" (probed r35). Grows as
+    /// the walk passes each declaration.
     needs_assignment: FxHashSet<SmolStr>,
     /// Names that are the direct LHS of an assignment (`x = …`/`x += …`) — a *write*, not a read, so
     /// excluded from the `UNASSIGNED_VARIABLE` check even though inference resolves the LHS.
@@ -1355,8 +1457,12 @@ impl Cx<'_> {
     }
 
     /// Run `is_assignable(from, to)` and raise the matching diagnostic. Safe to call
-    /// unconditionally: `to` being `Variant`/`Unknown` yields `Ok`/no diagnostic.
-    fn check_assign(&mut self, from: &Ty, to: &Ty, range: TextRange) {
+    /// unconditionally: `to` being `Variant`/`Unknown` yields `Ok`/no diagnostic. `ctx` selects
+    /// Godot's verb — its generic texts are `Cannot assign a value of type "A" as "B".` and
+    /// `Cannot return a value of type "A" as "B".` (probed p05/q28/p36; Godot prints a second,
+    /// site-specific line too — the analyzer emits the generic one, which is common to every
+    /// assignment shape).
+    fn check_assign(&mut self, from: &Ty, to: &Ty, range: TextRange, ctx: AssignCtx) {
         match ty::is_assignable(self.api, from, to) {
             Assign::Narrowing => self.warn(
                 range,
@@ -1366,12 +1472,16 @@ impl Cx<'_> {
             Assign::No => {
                 let to_label = to.label(self.api).unwrap_or_else(|| "?".to_owned());
                 let from_label = from.label(self.api).unwrap_or_else(|| "?".to_owned());
+                let verb = match ctx {
+                    AssignCtx::Assign => "assign",
+                    AssignCtx::Return => "return",
+                };
                 self.emit(
                     range,
                     Severity::Error,
                     TYPE_MISMATCH,
                     format!(
-                        "Cannot assign a value of type \"{from_label}\" to a target of type \"{to_label}\"."
+                        "Cannot {verb} a value of type \"{from_label}\" as \"{to_label}\"."
                     ),
                 );
             }
@@ -1379,7 +1489,7 @@ impl Cx<'_> {
             Assign::IntAsEnum => self.warn(
                 range,
                 WarningCode::IntAsEnumWithoutCast,
-                "Integer used when an enum value is expected. Cast the value to the enum type."
+                "Integer used when an enum value is expected. If this is intended, cast the integer to the enum type using the \"as\" keyword."
                     .to_owned(),
             ),
             Assign::Ok | Assign::OkUnsafe => {}
@@ -1397,14 +1507,14 @@ impl Cx<'_> {
             Expr::Ternary { .. } => self.warn(
                 self.range_of(e),
                 WarningCode::StandaloneTernary,
-                "Standalone ternary conditional: the return value is discarded.".to_owned(),
+                "Standalone ternary operator (the return value is being discarded).".to_owned(),
             ),
             // Not value-like statements / forms with subtle effects — never flag.
             Expr::Missing | Expr::Lambda { .. } | Expr::GetNode { .. } | Expr::Preload { .. } => {}
             _ => self.warn(
                 self.range_of(e),
                 WarningCode::StandaloneExpression,
-                "Standalone expression (the line has no effect).".to_owned(),
+                "Standalone expression (the line may have no effect).".to_owned(),
             ),
         }
     }
@@ -1475,7 +1585,7 @@ impl Cx<'_> {
                     };
                     let t = self.infer_expr(e, &expected);
                     if let Expectation::Has(ret) = expected {
-                        self.check_assign(&t, &ret, self.range_of(e));
+                        self.check_assign(&t, &ret, self.range_of(e), AssignCtx::Return);
                     }
                 }
             }
@@ -1630,47 +1740,60 @@ impl Cx<'_> {
             // when the name does NOT shadow a global — the global one is emitted by the binding
             // post-pass in `infer`, keeping a single warning per declaration.
             if shadowed_global_kind(self.db, self.api, &v.name).is_none() {
-                if shadows_param || shadows_member {
-                    let outer = if shadows_param {
-                        "parameter"
-                    } else {
-                        "class member"
-                    };
+                if shadows_param {
+                    // Godot hard-errors on this shape ("There is already a parameter named …",
+                    // probed r31 — a param and a local share one function scope). The analyzer
+                    // keeps Warning severity under SHADOWED_VARIABLE (documented divergence: a
+                    // warning here never blocks a build); the text is Godot's own.
                     self.warn(
                         v.name_range,
                         WarningCode::ShadowedVariable,
                         format!(
-                            "The local {what} \"{}\" shadows a {outer} of the same name.",
+                            "There is already a parameter named \"{}\" declared in this scope.",
                             v.name
                         ),
                     );
-                } else if self.engine_base_has_value_member(&v.name) {
-                    // An own-member shadow already won above; only a *base*-member shadow reaches here.
+                } else if shadows_member {
+                    // Godot's wording names the shadowed member's 1-based line (probed q08). The
+                    // range comes from the class scope's item tree; an anonymous-enum variant has
+                    // no `Member` node, so it falls back to the line-less wording.
+                    let msg = match self
+                        .class
+                        .lookup(&v.name)
+                        .and_then(|item| self.class.member(item))
+                        .and_then(member_name_range)
+                    {
+                        Some(r) => format!(
+                            "The local {what} \"{}\" is shadowing an already-declared variable at line {} in the current class.",
+                            v.name,
+                            self.line_of(r)
+                        ),
+                        None => format!(
+                            "The local {what} \"{}\" is shadowing an already-declared variable in the current class.",
+                            v.name
+                        ),
+                    };
+                    self.warn(v.name_range, WarningCode::ShadowedVariable, msg);
+                } else if let Some((kind, base)) = self.engine_base_value_member_kind(&v.name) {
+                    // An own-member shadow already won above; only a *base*-member shadow reaches
+                    // here. Godot names the member kind and the base class (probed p23/q09/r38).
                     self.warn(
                         v.name_range,
                         WarningCode::ShadowedVariableBaseClass,
                         format!(
-                            "The local {what} \"{}\" shadows a member of a base class.",
+                            "The local {what} \"{}\" is shadowing an already-declared {kind} in the base class \"{base}\".",
                             v.name
                         ),
                     );
                 }
             }
-            // ENUM_VARIABLE_WITHOUT_DEFAULT — a local typed as an enum with no initializer (the
-            // implicit `0` may not name a valid enum value). Only an explicit `Ty::Enum` annotation.
-            if v.init.is_none() && matches!(annotated.as_ref(), Some(Ty::Enum(_))) {
-                self.warn(
-                    v.name_range,
-                    WarningCode::EnumVariableWithoutDefault,
-                    format!(
-                        "The enum variable \"{}\" has no default value (it defaults to 0, which may not be a valid enum value).",
-                        v.name
-                    ),
-                );
-            }
-            // A typed local declared WITHOUT an initializer is the only `UNASSIGNED_VARIABLE`
-            // candidate (an untyped / `:=` / initialized local is never read-before-assign).
-            if v.type_ref.is_some() && v.init.is_none() {
+            // UNASSIGNED_VARIABLE candidates: an UNTYPED no-init local (Godot 4 zero-initializes
+            // a typed `var x: int` and stays silent on a read — probed q11 vs r35), plus an
+            // ENUM-typed no-init local — Godot tracks those as unassigned rather than raising
+            // ENUM_VARIABLE_WITHOUT_DEFAULT, which is member-only (probed r47: `var e:
+            // MouseButton` + read warns "used before being assigned").
+            let enum_typed = matches!(annotated.as_ref(), Some(Ty::Enum(_)));
+            if v.init.is_none() && (v.type_ref.is_none() || enum_typed) {
                 self.needs_assignment.insert(v.name.clone());
             }
         }
@@ -2199,7 +2322,7 @@ impl Cx<'_> {
         };
         let value = self.infer_expr(rhs, &expected);
         if !slot.is_uninformative() {
-            self.check_assign(&value, &slot, self.range_of(rhs));
+            self.check_assign(&value, &slot, self.range_of(rhs), AssignCtx::Assign);
         }
         // Assignment *invalidates* the place's narrowing (handled by the flow analysis, Workstream
         // 2); re-narrowing from the assigned value's type is a post-1.0 precision item.
@@ -2312,15 +2435,28 @@ impl Cx<'_> {
             if ty::is_assignable(self.api, &arg_ty, param_ty) == Assign::OkUnsafe {
                 let pl = param_ty.label(self.api).unwrap_or_else(|| "?".to_owned());
                 let al = arg_ty.label(self.api).unwrap_or_else(|| "?".to_owned());
+                let callee_name = self
+                    .callee_display_name(callee)
+                    .map_or_else(|| "<expression>".to_owned(), |n| n.to_string());
                 self.warn(
                     self.range_of(arg),
                     WarningCode::UnsafeCallArgument,
                     format!(
-                        "The argument {} requires a value of type \"{pl}\" but is passed \"{al}\", which is unsafe.",
+                        "The argument {} of the function \"{callee_name}()\" requires the subtype \"{pl}\" but the supertype \"{al}\" was provided.",
                         i + 1
                     ),
                 );
             }
+        }
+    }
+
+    /// The display name of a call's callee, for message wording — a bare `Name`, or the method
+    /// name of a `Field` call. `None` for computed callees (`(f())()`).
+    fn callee_display_name(&self, callee: ExprId) -> Option<SmolStr> {
+        match self.body.expr(callee) {
+            Expr::Name(n) => Some(n.clone()),
+            Expr::Field { name, .. } => Some(name.clone()),
+            _ => None,
         }
     }
 
@@ -2473,9 +2609,9 @@ impl Cx<'_> {
         self.warn(
             self.name_token_range(callee, name),
             WarningCode::UndefinedFunction,
-            format!(
-                "The function \"{name}()\" is not declared in this class, its base, or anywhere in the loaded project."
-            ),
+            // Godot's exact compile-error text for a bare-name miss (probed p04) — the "base
+            // self" filler is literal: a bare call resolves against the script's own class.
+            format!("Function \"{name}()\" not found in base self."),
         );
     }
 
@@ -2496,9 +2632,8 @@ impl Cx<'_> {
         self.warn(
             self.name_token_range(id, name),
             WarningCode::UndefinedIdentifier,
-            format!(
-                "The identifier \"{name}\" is not declared in the current scope or anywhere in the loaded project."
-            ),
+            // Godot's exact compile-error text (probed p03).
+            format!("Identifier \"{name}\" not declared in the current scope."),
         );
     }
 
@@ -2785,19 +2920,57 @@ impl Cx<'_> {
         self.warn(range, code, message);
     }
 
-    /// Whether the class's RESOLVED **engine** base declares a *value* member (var/const/signal)
-    /// named `name` — the sound floor for `SHADOWED_VARIABLE_BASE_CLASS`. Only the engine base is
-    /// consulted: an unresolved base (the cross-file seam) returns `false` (no warning), and the
-    /// cross-file *user*-base `MemberSig` is lossy (no kind detail) so user-base shadowing stays
-    /// deferred (see `TECH_DEBT.md`). Methods are excluded (matches the own-member shadow rule).
-    fn engine_base_has_value_member(&self, name: &str) -> bool {
+    /// The member kind + base-class label of a *value* member (property/constant/signal) on the
+    /// RESOLVED **engine** base named `name` — the sound floor for `SHADOWED_VARIABLE_BASE_CLASS`
+    /// and the two fillers of Godot's wording ("… an already-declared {kind} in the base class
+    /// \"{base}\"."). Only the engine base is consulted: an unresolved base (the cross-file seam)
+    /// returns `None` (no warning), and the cross-file *user*-base `MemberSig` is lossy (no kind
+    /// detail) so user-base shadowing stays deferred (see `TECH_DEBT.md`). Methods are excluded
+    /// (matches the own-member shadow rule; Godot flags those too — recorded in `TECH_DEBT.md` as
+    /// deliberate under-warning). The label is the direct `extends` base — the class Godot names
+    /// in the probes; a member inherited from deeper up still reports the direct base.
+    fn engine_base_value_member_kind(&self, name: &str) -> Option<(&'static str, String)> {
         let Ty::Object(base) = &self.class.base else {
-            return false;
+            return None;
         };
-        matches!(
-            self.api.lookup_member(*base, name),
-            Some(MemberRef::Property(_) | MemberRef::Const(_) | MemberRef::Signal(_))
-        )
+        let kind = match self.api.lookup_member(*base, name)? {
+            MemberRef::Property(_) => "property",
+            MemberRef::Const(_) => "constant",
+            MemberRef::Signal(_) => "signal",
+            _ => return None,
+        };
+        let label = Ty::Object(*base)
+            .label(self.api)
+            .unwrap_or_else(|| "?".to_owned());
+        Some((kind, label))
+    }
+
+    /// The 1-based line number of a byte offset in the file being inferred (Godot bakes the
+    /// shadowed declaration's line into `SHADOWED_VARIABLE`'s message). Counts newlines through
+    /// the CST text in chunks — no allocation of the whole file.
+    #[allow(
+        clippy::naive_bytecount,
+        reason = "a cold diagnostic-message path over one chunk prefix; not worth a bytecount dependency"
+    )]
+    fn line_of(&self, range: TextRange) -> u32 {
+        let mut line: u32 = 1;
+        let mut seen: usize = 0;
+        let target = range.start as usize;
+        self.root.text().for_each_chunk(|chunk| {
+            let remaining = target.saturating_sub(seen);
+            if remaining > 0 {
+                let take = remaining.min(chunk.len());
+                line += u32::try_from(
+                    chunk.as_bytes()[..take]
+                        .iter()
+                        .filter(|&&b| b == b'\n')
+                        .count(),
+                )
+                .unwrap_or(0);
+            }
+            seen += chunk.len();
+        });
+        line
     }
 
     /// Flag a deprecated member-kind misuse on a statically-resolved engine member:
@@ -2816,15 +2989,13 @@ impl Cx<'_> {
         if !as_method {
             return;
         }
-        let (code, kind, ty) = match m {
+        let (code, ty) = match m {
             MemberRef::Property(p) => (
                 WarningCode::PropertyUsedAsFunction,
-                "property",
                 ty::resolve_tyref(self.api, &p.ty),
             ),
             MemberRef::Const(c) => (
                 WarningCode::ConstantUsedAsFunction,
-                "constant",
                 ty::resolve_tyref(self.api, &c.ty),
             ),
             _ => return,
@@ -2833,10 +3004,14 @@ impl Cx<'_> {
         if ty.is_uninformative() || matches!(ty, Ty::Callable | Ty::Signal(_)) {
             return;
         }
+        // Godot's exact wording (probed q18/q19) — it names the member's TYPE, not its kind.
+        // Godot hard-errors at these sites; the analyzer keeps the catalog's Warning default
+        // (documented divergence).
+        let ty_label = ty.label(self.api).unwrap_or_else(|| "?".to_owned());
         self.warn(
             range,
             code,
-            format!("The {kind} \"{name}\" is being called as if it were a function."),
+            format!("Name \"{name}\" called as a function but is a \"{ty_label}\"."),
         );
     }
 
@@ -2876,11 +3051,19 @@ impl Cx<'_> {
         {
             return;
         }
+        // Godot's exact wording (probed q20): names the method and the receiver's TYPE.
+        let type_label = self
+            .locals
+            .get(rname)
+            .and_then(|t| t.label(self.api))
+            .unwrap_or_else(|| "?".to_owned());
         self.warn(
             range,
             WarningCode::StaticCalledOnInstance,
-            "A static method is being called on an instance; call it on the type instead."
-                .to_owned(),
+            format!(
+                "The function \"{name}()\" is a static function but was called from an instance. Instead, it should be directly called from the type: \"{type_label}.{name}()\".",
+                name = sig.name
+            ),
         );
     }
 
@@ -2927,7 +3110,7 @@ impl Cx<'_> {
         match (annotated, init_ty) {
             // `var x: T = e` — hard slot; check the initializer against it.
             (Some(t), Some(init)) => {
-                self.check_assign(init, t, range);
+                self.check_assign(init, t, range, AssignCtx::Assign);
                 t.clone()
             }
             // `var x: T` (no init).
@@ -3037,9 +3220,12 @@ impl Cx<'_> {
     /// A member miss on a BUILT-IN receiver: `UNDEFINED_METHOD` / `UNDEFINED_PROPERTY`, ERROR by
     /// default. Unlike `Object` receivers — where a script can attach members at runtime, so Godot
     /// itself stays silent and we keep the opt-in `UNSAFE_*` — the builtin member tables are closed
-    /// and bundled, and Godot reports this exact case as a compile error ("Cannot find member … in
-    /// base …", verified on 4.7 for typed AND `:=`-inferred receivers, methods and properties
-    /// alike; keyed builtins' property access is subscript sugar and handled above, never here).
+    /// and bundled, and Godot reports this exact case as a compile error — for a method miss 4.7
+    /// prints BOTH `Cannot find member "x" in base "T".` and `Function "x()" not found in base
+    /// T.` (one line each from its member- and call-checks); for a property miss only the member
+    /// form (probes p01/p02/p32/p33, typed AND `:=`-inferred receivers alike; keyed builtins'
+    /// property access is subscript sugar and handled above, never here). The analyzer emits ONE
+    /// diagnostic per site: the call-check text for methods, the member text for properties.
     /// No workspace-completeness claim is needed (the table ships with the analyzer); the only
     /// gates are the engine version — a NEWER project engine may have added the member, so fall
     /// back to the opt-in `UNSAFE_*` signal there — and a `Nil` receiver, which is a nullability
@@ -3065,16 +3251,14 @@ impl Cx<'_> {
         let (code, message) = if as_method {
             (
                 WarningCode::UndefinedMethod,
-                format!(
-                    "The method \"{name}()\" does not exist on the built-in type \"{recv_label}\"."
-                ),
+                // Godot's call-check text (probed p01/p32/p33) — the base is NOT quoted here.
+                format!("Function \"{name}()\" not found in base {recv_label}."),
             )
         } else {
             (
                 WarningCode::UndefinedProperty,
-                format!(
-                    "The property \"{name}\" does not exist on the built-in type \"{recv_label}\"."
-                ),
+                // Godot's member-check text (probed p02) — the base IS quoted here.
+                format!("Cannot find member \"{name}\" in base \"{recv_label}\"."),
             )
         };
         self.warn(range, code, message);
@@ -3213,7 +3397,7 @@ impl Cx<'_> {
             self.warn(
                 self.range_of(id),
                 WarningCode::UnassignedVariable,
-                format!("The variable \"{name}\" may be used before it is assigned a value."),
+                format!("The variable \"{name}\" is used before being assigned a value."),
             );
         }
         // Flow narrowing wins over the binding's declared type.
@@ -3498,7 +3682,18 @@ mod tests {
         let body = body::body_of_func(&func);
         let return_ty = cst::first_child(&func, |k| k == SyntaxKind::TypeRef)
             .map_or(Ty::Variant, |t| resolve::resolve_type_ref(&db, api, &t));
-        let result = infer(&db, api, &root, &class, &body, return_ty, true);
+        let owner =
+            cst::first_child(&func, |k| k == SyntaxKind::Name).map(|n| n.text().to_string());
+        let result = infer(
+            &db,
+            api,
+            &root,
+            &class,
+            &body,
+            return_ty,
+            true,
+            owner.as_deref(),
+        );
         Harness { result, body }
     }
 
@@ -3614,16 +3809,13 @@ mod tests {
     #[test]
     fn calling_an_unassigned_local_callable_still_flags_unassigned() {
         // The locals-first CALL branch routes through resolve_name, so the definite-assignment
-        // check fires for a call-before-assignment exactly like a read-before-assignment.
-        let h = infer_first_func(
-            "func f():\n\tvar cb: Callable\n\tcb.call()\n\tvar g: Callable\n\tg = Callable()\n\tg.call()\n",
-        );
-        // (cb is read via the receiver path; keep this focused on the bare-call form:)
-        let h2 = infer_first_func("func f():\n\tvar cb: Callable\n\tcb()\n\tcb = Callable()\n");
+        // check fires for a call-before-assignment exactly like a read-before-assignment. The
+        // local is UNTYPED — a typed `var cb: Callable` is zero-initialized by Godot 4 and never
+        // an UNASSIGNED_VARIABLE candidate (probed q11/r35).
+        let h2 = infer_first_func("func f():\n\tvar cb\n\tcb()\n\tcb = Callable()\n");
         assert!(
             codes(&h2).contains(&"UNASSIGNED_VARIABLE"),
-            "a bare call reads the local before assignment: {:?} / {:?}",
-            codes(&h),
+            "a bare call reads the local before assignment: {:?}",
             codes(&h2)
         );
     }
@@ -4355,18 +4547,20 @@ mod tests {
     }
 
     #[test]
-    fn typed_local_read_before_assignment_warns() {
+    fn typed_local_read_before_assignment_does_not_warn() {
+        // Godot 4 zero-initializes a typed `var x: int` — reading it is defined behavior and
+        // Godot is silent (probed q11). Only UNTYPED no-init locals are candidates.
         let h = infer_first_func("func f() -> int:\n\tvar x: int\n\treturn x\n");
         assert!(
-            codes(&h).contains(&"UNASSIGNED_VARIABLE"),
+            !codes(&h).contains(&"UNASSIGNED_VARIABLE"),
             "{:?}",
             codes(&h)
         );
     }
 
     #[test]
-    fn typed_local_assigned_then_read_does_not_warn() {
-        let h = infer_first_func("func f() -> int:\n\tvar x: int\n\tx = 5\n\treturn x\n");
+    fn untyped_local_assigned_then_read_does_not_warn() {
+        let h = infer_first_func("func f():\n\tvar x\n\tx = 5\n\treturn x\n");
         assert!(
             !codes(&h).contains(&"UNASSIGNED_VARIABLE"),
             "{:?}",
@@ -4385,21 +4579,30 @@ mod tests {
     }
 
     #[test]
-    fn untyped_local_is_not_unassigned_checked() {
-        // An untyped `var x` is not an UNASSIGNED_VARIABLE candidate (no declared slot type).
+    fn untyped_local_read_before_assignment_warns() {
+        // Godot's exact message + trigger (probed r35): the UNTYPED no-init local is the
+        // UNASSIGNED_VARIABLE candidate (it holds nil until the first assignment).
         let h = infer_first_func("func f():\n\tvar x\n\tvar y = x\n\treturn y\n");
         assert!(
-            !codes(&h).contains(&"UNASSIGNED_VARIABLE"),
+            codes(&h).contains(&"UNASSIGNED_VARIABLE"),
             "{:?}",
             codes(&h)
+        );
+        assert!(
+            h.result
+                .raw_warnings
+                .iter()
+                .any(|w| w.message == "The variable \"x\" is used before being assigned a value."),
+            "Godot-verbatim wording expected: {:?}",
+            h.result.raw_warnings
         );
     }
 
     #[test]
-    fn typed_local_assigned_in_all_branches_then_read_does_not_warn() {
+    fn untyped_local_assigned_in_all_branches_then_read_does_not_warn() {
         // Both branches assign before the merge ⇒ definitely assigned ⇒ no warning (the join).
         let h = infer_first_func(
-            "func f(c) -> int:\n\tvar x: int\n\tif c:\n\t\tx = 1\n\telse:\n\t\tx = 2\n\treturn x\n",
+            "func f(c):\n\tvar x\n\tif c:\n\t\tx = 1\n\telse:\n\t\tx = 2\n\treturn x\n",
         );
         assert!(
             !codes(&h).contains(&"UNASSIGNED_VARIABLE"),
@@ -4409,10 +4612,9 @@ mod tests {
     }
 
     #[test]
-    fn typed_local_assigned_in_one_branch_then_read_warns() {
-        // Assigned only in the `then` branch ⇒ may be unassigned at the read ⇒ warns (matches Godot).
-        let h =
-            infer_first_func("func f(c) -> int:\n\tvar x: int\n\tif c:\n\t\tx = 1\n\treturn x\n");
+    fn untyped_local_assigned_in_one_branch_then_read_warns() {
+        // Assigned only in the `then` branch ⇒ may be unassigned (nil) at the read ⇒ warns.
+        let h = infer_first_func("func f(c):\n\tvar x\n\tif c:\n\t\tx = 1\n\treturn x\n");
         assert!(
             codes(&h).contains(&"UNASSIGNED_VARIABLE"),
             "{:?}",
@@ -4480,21 +4682,37 @@ mod tests {
     }
 
     #[test]
-    fn enum_local_without_default_warns() {
-        let h = infer_first_func("func f():\n\tvar m: Tween.TweenProcessMode\n");
+    fn enum_local_without_default_is_unassigned_tracked_not_warned() {
+        // Godot's ENUM_VARIABLE_WITHOUT_DEFAULT is MEMBER-only (probed r47): an enum-typed
+        // no-init LOCAL joins the UNASSIGNED_VARIABLE tracking instead, firing on a read.
+        let h = infer_first_func("func f():\n\tvar m: Tween.TweenProcessMode\n\tprint(m)\n");
         assert!(
-            codes(&h).contains(&"ENUM_VARIABLE_WITHOUT_DEFAULT"),
+            !codes(&h).contains(&"ENUM_VARIABLE_WITHOUT_DEFAULT"),
+            "{:?}",
+            codes(&h)
+        );
+        assert!(
+            codes(&h).contains(&"UNASSIGNED_VARIABLE"),
             "{:?}",
             codes(&h)
         );
     }
 
     #[test]
-    fn enum_member_without_default_warns() {
-        let codes = file_codes("var err: Error\nfunc f():\n\tpass\n");
+    fn enum_member_without_default_warns_only_without_a_zero_value() {
+        // `MouseButtonMask` declares no 0 value ⇒ the implicit default is invalid ⇒ warns
+        // (probed r48); `Error` has `OK = 0` ⇒ Godot is silent (probed r46-shape).
+        let codes = file_codes("var m: MouseButtonMask\nfunc f():\n\tpass\n");
         assert!(
             codes.iter().any(|c| c == "ENUM_VARIABLE_WITHOUT_DEFAULT"),
             "{codes:?}"
+        );
+        let with_zero = file_codes("var err: Error\nfunc f():\n\tpass\n");
+        assert!(
+            !with_zero
+                .iter()
+                .any(|c| c == "ENUM_VARIABLE_WITHOUT_DEFAULT"),
+            "{with_zero:?}"
         );
     }
 
