@@ -1103,3 +1103,22 @@ each with its own bug-hunt, than batched in under freeze pressure. Sequenced by 
       so the W1 firewall holds), `WarningSettings::with_strict_opt_in` flipping only the opt-in
       promotion (an explicit project per-code level still wins), `AnalysisHost::set_warning_override`,
       and mutually-exclusive `--strict` / `--engine-defaults` CLI flags.
+- [ ] **T4.1 (guitkx parity) — Godot-message divergences recorded, not yet closed.** The golden table
+      (`crates/gdscript-hir/src/godot_messages_tests.rs`, probed on 4.7.stable) pins every 1:1 message
+      verbatim; these four SEMANTIC gaps were found by the probes and deliberately left (each is an
+      under-warn or a severity softening, never a false positive):
+      - **Severity softening (text is Godot's, severity stays the catalog's Warning):** Godot hard-ERRORS
+        on property/constant-called-as-function (`Name "x" called as a function but is a "T".`), on a
+        local redeclaring a parameter (`There is already a parameter named "x" declared in this scope.`,
+        emitted under `SHADOWED_VARIABLE`), and on `class_name` hiding a global (`Class "X" hides a
+        native class.`). Escalating them needs a corpus FP study first (a registry-seam false positive
+        must never block a build).
+      - **Local redeclaration is silent:** `var x` twice in one function scope (or shadowing an outer
+        local) is a Godot hard error ("There is already a variable named …"); the analyzer has no
+        REDECLARED_VARIABLE check at all (flow just drops the narrowing). Needs its own check + corpus run.
+      - **`SHADOWED_VARIABLE_BASE_CLASS` excludes methods:** Godot flags a local shadowing a base-class
+        *method* too (`…shadowing an already-declared method in the base class "Node".`, probed r38);
+        the analyzer's value-members-only rule under-warns there.
+      - **Own-script enum annotations don't resolve through `resolve_type_name`** (no file context), so
+        `enum E { A = 1 }` + `var e: E` (member, no zero value) misses the ENUM_VARIABLE_WITHOUT_DEFAULT
+        that Godot raises (q15). Engine enums are covered (the zero-value gate is implemented and pinned).

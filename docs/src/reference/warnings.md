@@ -41,7 +41,9 @@ Every gateable GDScript warning the analyzer can emit, with its `project.godot` 
 | `STANDALONE_EXPRESSION` | `standalone_expression` | Warn | 4.3 | An expression statement has no effect. |
 | `STANDALONE_TERNARY` | `standalone_ternary` | Warn | 4.3 | A ternary conditional is used as a statement; its value is discarded. |
 | `STATIC_CALLED_ON_INSTANCE` | `static_called_on_instance` | Warn | 4.3 | A static method is called through an instance. |
-| `UNASSIGNED_VARIABLE` | `unassigned_variable` | Warn | 4.3 | A typed local is read before it is assigned a value. |
+| `TOO_FEW_ARGUMENTS` | `too_few_arguments` | Error | 4.3 | A call passes fewer arguments than the callee's required parameters (a compile error in Godot). Only statically-resolved signatures are checked. |
+| `TOO_MANY_ARGUMENTS` | `too_many_arguments` | Error | 4.3 | A call passes more arguments than the callee accepts (a compile error in Godot). Variadic callees are never flagged. |
+| `UNASSIGNED_VARIABLE` | `unassigned_variable` | Warn | 4.3 | An untyped or enum-typed local is read before it is assigned a value (a typed local is zero-initialized). |
 | `UNASSIGNED_VARIABLE_OP_ASSIGN` | `unassigned_variable_op_assign` | Warn | 4.3 | A compound assignment (`+=`, …) is applied to a still-unassigned local. |
 | `UNDEFINED_FUNCTION` | `undefined_function` | Error | 4.3 | A called function is not defined anywhere in the loaded project (a compile error in Godot). Analyzer-specific code; fires only when the loader declared the workspace complete. |
 | `UNDEFINED_IDENTIFIER` | `undefined_identifier` | Error | 4.3 | An identifier is not declared anywhere in the loaded project (a compile error in Godot). Analyzer-specific code; fires only when the loader declared the workspace complete. |

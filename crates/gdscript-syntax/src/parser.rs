@@ -320,12 +320,35 @@ impl<'s> Parser<'s> {
         }
     }
 
-    /// Consume `kind` or record an "expected" diagnostic (without consuming).
+    /// Consume `kind` or record an `Expected "…".` diagnostic (without consuming) —
+    /// Godot's quoting convention via [`SyntaxKind::display_name`], never the Rust
+    /// Debug name.
     fn expect(&mut self, kind: SyntaxKind) {
         if self.eat(kind) {
             return;
         }
-        self.error(format!("expected {kind:?}"));
+        self.error(format!("Expected {}.", kind.display_name()));
+    }
+
+    /// [`Self::expect`] with Godot's contextual wording: `Expected ":" after "if"
+    /// condition.` — `context` carries its own quoting (probes p11/q27/s01-s04/s12).
+    fn expect_after(&mut self, kind: SyntaxKind, context: &str) {
+        if self.eat(kind) {
+            return;
+        }
+        self.error(format!("Expected {} after {context}.", kind.display_name()));
+    }
+
+    /// [`Self::expect`] for closing brackets, Godot-style: `Expected closing ")" after
+    /// call arguments.` (probes p16/p18/s07/s08).
+    fn expect_closing(&mut self, kind: SyntaxKind, context: &str) {
+        if self.eat(kind) {
+            return;
+        }
+        self.error(format!(
+            "Expected closing {} after {context}.",
+            kind.display_name()
+        ));
     }
 
     /// Record a diagnostic at the current token.
@@ -464,6 +487,114 @@ mod tests {
 
     fn contains_node(node: &ResolvedNode<SyntaxKind>, kind: SyntaxKind) -> bool {
         node.kind() == kind || node.children().any(|c| contains_node(c, kind))
+    }
+
+    #[test]
+    fn syntax_error_messages_match_godot() {
+        // Verbatim wordings probed on Godot 4.7.stable.official (the same binary and
+        // methodology as gdscript-hir's `godot_messages_tests`; the p../q../s.. ids name
+        // the probe scripts). Each case asserts the parser produces Godot's exact text.
+        let cases: &[(&str, &str)] = &[
+            // p11
+            (
+                "func t() -> void:\n\tif true\n\t\tpass\n",
+                "Expected \":\" after \"if\" condition.",
+            ),
+            // s01
+            (
+                "func t(b: bool) -> void:\n\tif b:\n\t\tpass\n\telif b\n\t\tpass\n",
+                "Expected \":\" after \"elif\" condition.",
+            ),
+            // s02
+            (
+                "func t(b: bool) -> void:\n\tif b:\n\t\tpass\n\telse\n\t\tpass\n",
+                "Expected \":\" after \"else\".",
+            ),
+            // s03
+            (
+                "func t() -> void:\n\twhile false\n\t\tpass\n",
+                "Expected \":\" after \"while\" condition.",
+            ),
+            // s04
+            (
+                "func t() -> void:\n\tfor i in 3\n\t\tpass\n",
+                "Expected \":\" after \"for\" condition.",
+            ),
+            // p13
+            (
+                "func t() -> void:\n\tfor i 10:\n\t\tpass\n",
+                "Expected \"in\" or \":\" after \"for\" variable name.",
+            ),
+            // q27
+            (
+                "func t(v: int) -> void:\n\tmatch v\n\t\t1:\n\t\t\tpass\n",
+                "Expected \":\" after \"match\" expression.",
+            ),
+            // s06
+            (
+                "func t(v: int) -> void:\n\tmatch v:\n\t\t1\n\t\t\tpass\n",
+                "Expected \":\" or \"when\" after \"match\" patterns.",
+            ),
+            // s12
+            (
+                "class Inner\n\tpass\n",
+                "Expected \":\" after class declaration.",
+            ),
+            // s07
+            (
+                "func t(a: int -> void:\n\tpass\n",
+                "Expected closing \")\" after function parameters.",
+            ),
+            // p16
+            (
+                "func t() -> void:\n\tvar toggle = func(broken: pass\n",
+                "Expected closing \")\" after lambda parameters.",
+            ),
+            // s08
+            (
+                "func t() -> void:\n\tprint(1, 2\n",
+                "Expected closing \")\" after call arguments.",
+            ),
+            // p18
+            (
+                "func t() -> void:\n\tvar x = (1 + 2\n\tprint(x)\n",
+                "Expected closing \")\" after grouping expression.",
+            ),
+            // s09
+            (
+                "@\nfunc t() -> void:\n\tpass\n",
+                "Expected annotation identifier after \"@\".",
+            ),
+            // s10
+            (
+                "signal\n\nfunc t() -> void:\n\tpass\n",
+                "Expected signal name after \"signal\".",
+            ),
+            // p25's shape — Godot aborts the func and reports the indented body as class
+            // junk; this parser recovers INTO the body instead, so the pinned message is
+            // the generic quoted form (never the Rust Debug name `Colon`).
+            ("func t() -> void\n\tpass\n", "Expected \":\"."),
+            // The class-body junk message names the offending token, Godot-style (p25).
+            (
+                "5\n\nfunc t() -> void:\n\tpass\n",
+                "Unexpected \"Literal\" in class body.",
+            ),
+        ];
+        for (src, expected) in cases {
+            let errors = parse(src).errors().to_vec();
+            assert!(
+                errors.iter().any(|e| e.message == *expected),
+                "source {src:?}\nexpected {expected:?}\ngot {errors:#?}"
+            );
+        }
+        // The generic fallback quotes the token's fixed text instead of leaking Debug.
+        let errors = parse("func t() -> void:\n\tvar x = [1, 2\n")
+            .errors()
+            .to_vec();
+        assert!(
+            errors.iter().any(|e| e.message == "Expected \"]\"."),
+            "got {errors:#?}"
+        );
     }
 
     #[test]

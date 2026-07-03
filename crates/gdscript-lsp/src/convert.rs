@@ -37,7 +37,8 @@ pub fn severity_to_lsp(severity: Severity) -> lsp::DiagnosticSeverity {
 }
 
 /// A POD [`Diagnostic`] → an LSP [`Diagnostic`](lsp::Diagnostic). The stable `code` is preserved as a
-/// string code; `source` is always `"gdscript"` so clients can group ours.
+/// string code; `source` is always `"gdscript"` so clients can group ours; rendering tags
+/// (`Unnecessary` → dimmed, `Deprecated` → struck through) cross 1:1.
 #[must_use]
 pub fn diagnostic_to_lsp(
     li: &LineIndex,
@@ -45,12 +46,21 @@ pub fn diagnostic_to_lsp(
     diag: &Diagnostic,
     enc: PositionEncoding,
 ) -> lsp::Diagnostic {
+    let tags: Vec<lsp::DiagnosticTag> = diag
+        .tags
+        .iter()
+        .map(|t| match t {
+            gdscript_base::DiagnosticTag::Unnecessary => lsp::DiagnosticTag::UNNECESSARY,
+            gdscript_base::DiagnosticTag::Deprecated => lsp::DiagnosticTag::DEPRECATED,
+        })
+        .collect();
     lsp::Diagnostic {
         range: range_to_lsp(li, text, diag.range, enc),
         severity: Some(severity_to_lsp(diag.severity)),
         code: Some(lsp::NumberOrString::String(diag.code.clone())),
         source: Some("gdscript".to_owned()),
         message: diag.message.clone(),
+        tags: (!tags.is_empty()).then_some(tags),
         ..Default::default()
     }
 }

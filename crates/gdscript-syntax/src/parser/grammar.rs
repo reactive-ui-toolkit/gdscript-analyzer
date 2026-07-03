@@ -113,7 +113,10 @@ impl Parser<'_> {
             SignalKw => self.signal_decl(),
             ClassKw => self.inner_class(),
             _ => {
-                self.advance_with_error("expected a declaration");
+                // Godot's exact wording for junk in a class body, naming the offending
+                // token (`Unexpected "Indent" in class body.` — probed p25).
+                let msg = format!("Unexpected {} in class body.", self.nth(0).display_name());
+                self.advance_with_error(&msg);
             }
         }
     }
@@ -125,7 +128,8 @@ impl Parser<'_> {
         if self.at(Ident) {
             self.advance(); // the annotation name (e.g. `export`, `onready`, `abstract`)
         } else {
-            self.error("expected an annotation name after `@`".to_owned());
+            // Godot's exact wording (probed s09).
+            self.error("Expected annotation identifier after \"@\".".to_owned());
         }
         if self.at(LParen) {
             self.arg_list();
@@ -170,7 +174,7 @@ impl Parser<'_> {
         self.eat(StaticKw);
         self.expect(FuncKw);
         self.opt_name();
-        self.param_list();
+        self.param_list("function parameters");
         if self.eat(Arrow) {
             self.type_ref();
         }
@@ -239,9 +243,14 @@ impl Parser<'_> {
     fn signal_decl(&mut self) {
         let m = self.open();
         self.expect(SignalKw);
-        self.opt_name();
+        if self.at_name() {
+            self.opt_name();
+        } else {
+            // Godot's exact wording (probed s10).
+            self.error("Expected signal name after \"signal\".".to_owned());
+        }
         if self.at(LParen) {
-            self.param_list();
+            self.param_list("signal parameters");
         }
         self.close(m, SignalDecl);
     }
@@ -254,7 +263,7 @@ impl Parser<'_> {
         if self.eat(ExtendsKw) {
             self.extends_target();
         }
-        self.expect(Colon);
+        self.expect_after(Colon, "class declaration"); // probed s12
         if self.eat(Newline) && self.at(Indent) {
             let b = self.open();
             self.advance(); // INDENT
@@ -334,8 +343,9 @@ impl Parser<'_> {
     }
 
     /// `'(' (param (',' param)*)? ')'` where a param is `name (: type)? (= expr)?` or
-    /// a `...rest` vararg.
-    fn param_list(&mut self) {
+    /// a `...rest` vararg. `what` names the owner in the closing-paren diagnostic —
+    /// Godot distinguishes "function parameters" / "lambda parameters" (probes s07/p16).
+    fn param_list(&mut self, what: &str) {
         let m = self.open();
         self.expect(LParen);
         while !self.at(RParen) && !self.eof() {
@@ -357,7 +367,7 @@ impl Parser<'_> {
             } else {
                 // A stray token where a parameter was expected (e.g. a double comma):
                 // report it and skip a separator to recover.
-                self.error("expected a parameter".to_owned());
+                self.error("Expected a parameter.".to_owned());
                 if !self.eat(Comma) {
                     break;
                 }
@@ -367,7 +377,7 @@ impl Parser<'_> {
                 break;
             }
         }
-        self.expect(RParen);
+        self.expect_closing(RParen, what);
         self.close(m, ParamList);
     }
 
@@ -387,7 +397,7 @@ impl Parser<'_> {
                 self.expect(RBrack);
             }
         } else {
-            self.error("expected a type".to_owned());
+            self.error("Expected a type.".to_owned());
         }
         self.close(m, TypeRef);
     }
@@ -425,7 +435,7 @@ impl Parser<'_> {
             "set" => Setter,
             // Recover by consuming the stray token so the accessor loop still makes progress.
             _ => {
-                self.advance_with_error("expected `get` or `set` in a property accessor");
+                self.advance_with_error("Expected \"get\" or \"set\" in a property accessor.");
                 return;
             }
         };
@@ -434,7 +444,7 @@ impl Parser<'_> {
         // Only `set` carries a parameter (`set(value)`); a `get(x)` is rejected (the `(` is left for
         // recovery — a `get` has no parameter list).
         if kind == Setter && self.at(LParen) {
-            self.param_list();
+            self.param_list("setter parameters");
         }
         if self.eat(Colon) {
             self.block();
@@ -508,7 +518,7 @@ impl Parser<'_> {
     /// deeper), and consume the matching `Dedent`, balancing any further nesting inside. Emits
     /// exactly one diagnostic for the region.
     fn over_indented_region(&mut self) {
-        self.error("unexpected indentation".to_owned());
+        self.error("Unexpected indentation.".to_owned());
         let m = self.open();
         let mut depth = 0u32; // extra nested Indents opened inside this region
         self.advance(); // the stray INDENT
@@ -590,20 +600,20 @@ impl Parser<'_> {
         let m = self.open();
         self.expect(IfKw);
         self.expr();
-        self.expect(Colon);
+        self.expect_after(Colon, "\"if\" condition"); // probed p11
         self.block();
         while self.at_clause(ElifKw) {
             let e = self.open();
             self.advance();
             self.expr();
-            self.expect(Colon);
+            self.expect_after(Colon, "\"elif\" condition"); // probed s01
             self.block();
             self.close(e, ElifClause);
         }
         if self.at_clause(ElseKw) {
             let e = self.open();
             self.advance();
-            self.expect(Colon);
+            self.expect_after(Colon, "\"else\""); // probed s02
             self.block();
             self.close(e, ElseClause);
         }
@@ -634,9 +644,13 @@ impl Parser<'_> {
         if self.eat(Colon) {
             self.type_ref();
         }
-        self.expect(InKw);
+        if !self.eat(InKw) {
+            // Godot's exact dual-token wording (probed p13) — after the loop variable
+            // either `in` or a `: Type` annotation's colon may follow.
+            self.error("Expected \"in\" or \":\" after \"for\" variable name.".to_owned());
+        }
         self.expr();
-        self.expect(Colon);
+        self.expect_after(Colon, "\"for\" condition"); // probed s04
         self.block();
         self.close(m, ForStmt);
     }
@@ -645,7 +659,7 @@ impl Parser<'_> {
         let m = self.open();
         self.expect(WhileKw);
         self.expr();
-        self.expect(Colon);
+        self.expect_after(Colon, "\"while\" condition"); // probed s03
         self.block();
         self.close(m, WhileStmt);
     }
@@ -654,7 +668,7 @@ impl Parser<'_> {
         let m = self.open();
         self.expect(MatchKw);
         self.expr();
-        self.expect(Colon);
+        self.expect_after(Colon, "\"match\" expression"); // probed q27
         if self.eat(Newline) && self.at(Indent) {
             self.advance(); // INDENT
             while !self.at(Dedent) && !self.eof() {
@@ -684,7 +698,10 @@ impl Parser<'_> {
             self.expr();
             self.close(g, PatternGuard);
         }
-        self.expect(Colon);
+        if !self.eat(Colon) {
+            // Godot's exact dual-token wording (probed s06).
+            self.error("Expected \":\" or \"when\" after \"match\" patterns.".to_owned());
+        }
         self.block();
         self.close(m, MatchArm);
     }
@@ -742,7 +759,7 @@ impl Parser<'_> {
         if self.expr().is_none() && !self.at_any(&[Newline, Dedent, Semicolon]) && !self.eof() {
             // Nothing parsed and we're on an unexpected token: recover by skipping it.
             if !self.at_any(RECOVERY) {
-                self.advance_with_error("expected a statement");
+                self.advance_with_error("Expected a statement.");
             }
         }
         self.close(m, ExprStmt);
@@ -890,7 +907,7 @@ impl Parser<'_> {
                         self.advance();
                         self.close(n, NameRef);
                     } else {
-                        self.error("expected a member name".to_owned());
+                        self.error("Expected a member name.".to_owned());
                     }
                     lhs = self.close(m, FieldExpr);
                 }
@@ -919,7 +936,7 @@ impl Parser<'_> {
                 let m = self.open();
                 self.advance();
                 self.expr();
-                self.expect(RParen);
+                self.expect_closing(RParen, "grouping expression"); // probed p18
                 Some(self.close(m, ParenExpr))
             }
             LBrack => Some(self.array_lit()),
@@ -932,10 +949,10 @@ impl Parser<'_> {
             PreloadKw => Some(self.preload_expr()),
             _ => {
                 if self.at_any(&[Newline, Dedent, RParen, RBrack, RBrace, Comma]) || self.eof() {
-                    self.error("expected an expression".to_owned());
+                    self.error("Expected expression.".to_owned());
                     None
                 } else {
-                    Some(self.advance_with_error("expected an expression"))
+                    Some(self.advance_with_error("Expected expression."))
                 }
             }
         }
@@ -1011,7 +1028,7 @@ impl Parser<'_> {
         let m = self.open();
         self.expect(FuncKw);
         self.opt_name();
-        self.param_list();
+        self.param_list("lambda parameters");
         if self.eat(Arrow) {
             self.type_ref();
         }
@@ -1041,7 +1058,7 @@ impl Parser<'_> {
                 break;
             }
         }
-        self.expect(RParen);
+        self.expect_closing(RParen, "call arguments"); // probed s08
         self.close(m, ArgList);
     }
 }

@@ -326,6 +326,7 @@ mod tests {
             message: msg.into(),
             source: DiagnosticSource::Type,
             fixes: Vec::new(),
+            tags: Vec::new(),
         }
     }
 

@@ -111,6 +111,14 @@ impl Analyzer {
         self.session.set_workspace_complete(complete);
     }
 
+    /// Select the warning-gating profile: `"engine-defaults"` matches Godot's own default
+    /// levels (the `UNSAFE_*` opt-in family stays silent), `"strict"` promotes the safety
+    /// opt-ins to WARN, `"none"` restores the auto default. Unknown strings are ignored.
+    #[wasm_bindgen(js_name = setWarningOverride)]
+    pub fn set_warning_override(&mut self, mode: &str) {
+        self.session.set_warning_override(mode);
+    }
+
     /// Whether `uri` is currently open (distinguishes "not tracked" from a genuine empty result).
     #[wasm_bindgen(js_name = isOpen)]
     #[must_use]

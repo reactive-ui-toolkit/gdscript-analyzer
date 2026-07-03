@@ -150,6 +150,22 @@ impl Session {
         self.host.apply_change(change);
     }
 
+    /// Select the warning-gating profile: `"engine-defaults"` matches Godot's own default
+    /// levels (the `UNSAFE_*` opt-in family stays silent — an editor must not warn where the
+    /// engine wouldn't), `"strict"` promotes the safety opt-ins to WARN, `"none"` restores the
+    /// auto default (standalone ⇒ strict, project ⇒ engine defaults). A plain host field, not
+    /// a salsa input — flipping it never re-runs inference. Unknown strings are ignored
+    /// (forward-compatible).
+    pub fn set_warning_override(&mut self, mode: &str) {
+        let ov = match mode {
+            "engine-defaults" | "engineDefaults" => gdscript_ide::WarningOverride::EngineDefaults,
+            "strict" => gdscript_ide::WarningOverride::Strict,
+            "none" => gdscript_ide::WarningOverride::None,
+            _ => return,
+        };
+        self.host.set_warning_override(ov);
+    }
+
     /// Declare whether the opened file set is the **whole project** (every `.gd` under the project
     /// root). Only a client that actually walked the whole root should pass `true` — it arms the
     /// absence-based `UNDEFINED_FUNCTION` / `UNDEFINED_IDENTIFIER` diagnostics, which stay silent
@@ -439,8 +455,71 @@ mod tests {
         );
         let diags = s.diagnostics("file:///main.gd");
         assert_eq!(diags[0]["code"], "INTEGER_DIVISION");
+        // A non-rendering-hint diagnostic omits the `tags` key entirely — the pre-tag wire
+        // shape, so old consumers see no change.
+        assert!(diags[0].get("tags").is_none(), "{diags}");
         let syms = s.document_symbols("file:///main.gd");
         assert_eq!(syms[0]["name"], "f");
+    }
+
+    #[test]
+    fn warning_override_selects_the_engine_default_profile() {
+        let mut s = Session::new();
+        s.open(
+            "file:///u.gd",
+            "func f(n: Node) -> void:\n\tn.some_fn()\n",
+            None,
+        );
+        // The standalone default is strict: the UNSAFE_* safety family is promoted to WARN.
+        let strict = s.diagnostics("file:///u.gd");
+        assert!(
+            strict
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|d| d["code"] == "UNSAFE_METHOD_ACCESS"),
+            "{strict}"
+        );
+        // Engine defaults: Godot ships UNSAFE_* as IGNORE — an editor must not warn where the
+        // engine wouldn't (guitkx T4.6).
+        s.set_warning_override("engine-defaults");
+        let engine = s.diagnostics("file:///u.gd");
+        assert!(
+            !engine
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|d| d["code"] == "UNSAFE_METHOD_ACCESS"),
+            "{engine}"
+        );
+        // And back.
+        s.set_warning_override("none");
+        let auto = s.diagnostics("file:///u.gd");
+        assert!(
+            auto.as_array()
+                .unwrap()
+                .iter()
+                .any(|d| d["code"] == "UNSAFE_METHOD_ACCESS"),
+            "{auto}"
+        );
+    }
+
+    #[test]
+    fn unused_variable_diagnostic_carries_the_lsp_tag_number() {
+        let mut s = Session::new();
+        s.open(
+            "file:///unused.gd",
+            "func f() -> void:\n\tvar unused = 1\n",
+            None,
+        );
+        let diags = s.diagnostics("file:///unused.gd");
+        let unused = diags
+            .as_array()
+            .and_then(|a| a.iter().find(|d| d["code"] == "UNUSED_VARIABLE"))
+            .expect("an UNUSED_VARIABLE diagnostic");
+        // The LSP `DiagnosticTag` NUMBER (1 = Unnecessary) crosses the JSON surface verbatim,
+        // so protocol clients forward it without a mapping table.
+        assert_eq!(unused["tags"], json!([1]), "{unused}");
     }
 
     #[test]
