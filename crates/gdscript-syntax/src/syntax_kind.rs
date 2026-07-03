@@ -395,6 +395,29 @@ impl SyntaxKind {
         // Nodes are exactly the kinds at/after `SourceFile`.
         (self as u32) >= (Self::SourceFile as u32)
     }
+
+    /// The user-facing name of a token kind for the parser's `Expected …` diagnostics,
+    /// following Godot's own convention (probed on 4.7): fixed-text tokens quoted
+    /// (`":"`, `"in"`, `"func"`), token classes named the way Godot prints them —
+    /// `"Literal"` / `"Indent"` / `"Dedent"` stay capitalized-and-quoted (probes
+    /// s14/p25), `identifier` and `end of statement` read bare. Node kinds never reach
+    /// an `expected` diagnostic and fall back to `token`.
+    #[must_use]
+    pub fn display_name(self) -> String {
+        if let Some(t) = <SyntaxKind as Syntax>::static_text(self) {
+            return format!("\"{t}\"");
+        }
+        match self {
+            Self::Ident => "identifier".to_owned(),
+            Self::Int | Self::Float | Self::String | Self::StringName | Self::NodePath => {
+                "\"Literal\"".to_owned()
+            }
+            Self::Indent => "\"Indent\"".to_owned(),
+            Self::Dedent => "\"Dedent\"".to_owned(),
+            Self::Newline => "end of statement".to_owned(),
+            _ => "token".to_owned(),
+        }
+    }
 }
 
 /// A resolved (interner-carrying) red node — supports `Display`/`.text()` and the
