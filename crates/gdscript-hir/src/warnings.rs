@@ -149,6 +149,15 @@ pub enum WarningCode {
     /// A property/constant access on a BUILT-IN receiver that does not exist (`v.zzz` on a
     /// `Vector2`). Same closed-table reasoning as [`Self::UndefinedMethod`].
     UndefinedProperty,
+    /// A call passing fewer arguments than the callee's required (default-less) parameters —
+    /// a compile error in Godot (`Too few arguments for "f()" call. Expected at least N but
+    /// received M.`). Only fires on a statically-resolved own/engine/utility/builtin signature;
+    /// `Callable` values and cross-file seams stay silent.
+    TooFewArguments,
+    /// A call passing more arguments than the callee accepts — a compile error in Godot
+    /// (`Too many arguments for "f()" call. Expected at most N but received M.`). A variadic
+    /// callee (`print`, vararg engine methods) never fires it.
+    TooManyArguments,
 }
 
 /// Godot's `WarnLevel` (`gdscript_warning.h`): the resolved severity of a code.
@@ -253,6 +262,8 @@ impl WarningCode {
         Self::UndefinedIdentifier,
         Self::UndefinedMethod,
         Self::UndefinedProperty,
+        Self::TooFewArguments,
+        Self::TooManyArguments,
     ];
 
     /// The stable serialized identity — what `Diagnostic.code` carries (e.g. `INTEGER_DIVISION`).
@@ -313,6 +324,8 @@ impl WarningCode {
             Self::UndefinedIdentifier => "UNDEFINED_IDENTIFIER",
             Self::UndefinedMethod => "UNDEFINED_METHOD",
             Self::UndefinedProperty => "UNDEFINED_PROPERTY",
+            Self::TooFewArguments => "TOO_FEW_ARGUMENTS",
+            Self::TooManyArguments => "TOO_MANY_ARGUMENTS",
         }
     }
 
@@ -325,9 +338,15 @@ impl WarningCode {
     /// A one-line human description — the source of truth for the generated Warning Reference
     /// (Workstream 5). Kept terse and stable; an exhaustive `match` so a new code must add one.
     #[must_use]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one arm per catalog code by design — the exhaustive match IS the reference table"
+    )]
     pub fn description(self) -> &'static str {
         match self {
-            Self::UnassignedVariable => "A typed local is read before it is assigned a value.",
+            Self::UnassignedVariable => {
+                "An untyped or enum-typed local is read before it is assigned a value (a typed local is zero-initialized)."
+            }
             Self::UnassignedVariableOpAssign => {
                 "A compound assignment (`+=`, …) is applied to a still-unassigned local."
             }
@@ -424,6 +443,12 @@ impl WarningCode {
             Self::UndefinedProperty => {
                 "A property accessed on a built-in type does not exist on it (a compile error in Godot; the bundled built-in tables are closed, so no completeness claim is needed)."
             }
+            Self::TooFewArguments => {
+                "A call passes fewer arguments than the callee's required parameters (a compile error in Godot). Only statically-resolved signatures are checked."
+            }
+            Self::TooManyArguments => {
+                "A call passes more arguments than the callee accepts (a compile error in Godot). Variadic callees are never flagged."
+            }
         }
     }
 
@@ -450,7 +475,9 @@ impl WarningCode {
             | Self::UndefinedFunction
             | Self::UndefinedIdentifier
             | Self::UndefinedMethod
-            | Self::UndefinedProperty => WarnLevel::Error,
+            | Self::UndefinedProperty
+            | Self::TooFewArguments
+            | Self::TooManyArguments => WarnLevel::Error,
             // Everything else defaults to WARN.
             _ => WarnLevel::Warn,
         }
@@ -997,7 +1024,7 @@ mod tests {
             assert_eq!(WarningCode::from_setting_name(&c.setting_name()), Some(c));
         }
         // The set is the catalog; a missed `ALL` entry shows up as a short count.
-        assert_eq!(seen.len(), 53);
+        assert_eq!(seen.len(), 55);
     }
 
     #[test]

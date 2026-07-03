@@ -9,7 +9,7 @@
 //! receiver is *uninformative* — it never fires `UNSAFE_*`, never cascades — so cross-file code
 //! (which lands on `Unknown` via the seam) produces zero false diagnostics.
 
-use gdscript_api::{EngineApi, MemberRef, TyRef};
+use gdscript_api::{EngineApi, MemberRef, MethodSig, TyRef};
 use gdscript_base::{Diagnostic, DiagnosticSource, FileId, Severity, TextRange};
 use gdscript_db::Db;
 use gdscript_scene::{SceneModel, SceneNode};
@@ -1320,6 +1320,32 @@ enum AssignCtx {
     Return,
 }
 
+/// The statically-resolved signature of a callee, for call checking (arity + argument types).
+/// `name` is the display name Godot bakes into its call diagnostics.
+struct CallSignature {
+    name: SmolStr,
+    /// The fixed parameters' types, in order (a `...rest` vararg tail is NOT a slot here).
+    params: Vec<Ty>,
+    /// Parameters WITHOUT a default — Godot's "Expected at least N" (probed p10/p14).
+    required: usize,
+    /// A variadic tail accepts any surplus — never "too many" (probed p15 vs p21).
+    is_vararg: bool,
+}
+
+/// A [`CallSignature`] from an engine/builtin [`MethodSig`] (params carry defaults + vararg).
+fn method_call_signature(api: &EngineApi, sig: &MethodSig) -> CallSignature {
+    CallSignature {
+        name: SmolStr::new(&sig.name),
+        params: sig
+            .params
+            .iter()
+            .map(|p| ty::resolve_tyref(api, &p.ty))
+            .collect(),
+        required: sig.params.iter().filter(|p| p.default.is_none()).count(),
+        is_vararg: sig.is_vararg,
+    }
+}
+
 /// What type is expected of an expression (bidirectional checking).
 enum Expectation {
     /// No expectation — pure synthesis.
@@ -2414,90 +2440,122 @@ impl Cx<'_> {
         ret
     }
 
-    /// Raise `UNSAFE_CALL_ARGUMENT` for each argument whose static type needs an unsafe implicit
-    /// cast (`Variant` / a downcast) into the resolved parameter type — Godot's per-argument
-    /// value-prop warning. Only fires when the callee resolves to a concrete signature here; an
-    /// uninformative argument (the cross-file seam) is `Assign::Ok` and correctly silent, and an
-    /// untyped parameter accepts anything.
+    /// Check a call's arguments against the statically-resolved callee — arity first
+    /// (Godot hard-errors: probed p09/p10/p14/p21; a variadic tail absorbs any surplus, p15),
+    /// then per-argument assignability: a definite mismatch is Godot's Invalid-argument
+    /// compile error (probed p06), a Variant-into-typed pass stays the opt-in
+    /// `UNSAFE_CALL_ARGUMENT` (probed q26). Unresolvable callees (`Callable` values,
+    /// cross-file script methods, constructor overload sets, seam receivers) raise nothing.
     fn check_call_args(&mut self, callee: ExprId, args: &[ExprId]) {
-        let Some(params) = self.call_param_tys(callee) else {
+        let Some(sig) = self.call_signature(callee) else {
             return;
         };
+        if args.len() < sig.required {
+            self.warn(
+                self.range_of(callee),
+                WarningCode::TooFewArguments,
+                format!(
+                    "Too few arguments for \"{}()\" call. Expected at least {} but received {}.",
+                    sig.name,
+                    sig.required,
+                    args.len()
+                ),
+            );
+        } else if !sig.is_vararg && args.len() > sig.params.len() {
+            self.warn(
+                self.range_of(callee),
+                WarningCode::TooManyArguments,
+                format!(
+                    "Too many arguments for \"{}()\" call. Expected at most {} but received {}.",
+                    sig.name,
+                    sig.params.len(),
+                    args.len()
+                ),
+            );
+        }
         for (i, &arg) in args.iter().enumerate() {
-            let Some(param_ty) = params.get(i) else {
-                break; // a vararg tail or an arity mismatch — not an argument-type concern
+            let Some(param_ty) = sig.params.get(i) else {
+                break; // a vararg tail (the surplus itself was arity-checked above)
             };
             if param_ty.is_uninformative() || param_ty.is_variant() {
                 continue; // an untyped parameter accepts anything safely
             }
             // A missing arg type defaults to the seam (never warns), not `Variant` (would warn).
             let arg_ty = self.expr_ty.get(&arg).cloned().unwrap_or(Ty::Unknown);
-            if ty::is_assignable(self.api, &arg_ty, param_ty) == Assign::OkUnsafe {
-                let pl = param_ty.label(self.api).unwrap_or_else(|| "?".to_owned());
-                let al = arg_ty.label(self.api).unwrap_or_else(|| "?".to_owned());
-                let callee_name = self
-                    .callee_display_name(callee)
-                    .map_or_else(|| "<expression>".to_owned(), |n| n.to_string());
-                self.warn(
+            let pl = param_ty.label(self.api).unwrap_or_else(|| "?".to_owned());
+            let al = arg_ty.label(self.api).unwrap_or_else(|| "?".to_owned());
+            match ty::is_assignable(self.api, &arg_ty, param_ty) {
+                // Godot's site-specific compile error (p06 — it prints a generic `Cannot
+                // pass …` line too; one diagnostic per site, and the specific text wins
+                // here because the callee name is known).
+                Assign::No => self.emit(
+                    self.range_of(arg),
+                    Severity::Error,
+                    TYPE_MISMATCH,
+                    format!(
+                        "Invalid argument for \"{}()\" function: argument {} should be \"{pl}\" but is \"{al}\".",
+                        sig.name,
+                        i + 1
+                    ),
+                ),
+                Assign::OkUnsafe => self.warn(
                     self.range_of(arg),
                     WarningCode::UnsafeCallArgument,
                     format!(
-                        "The argument {} of the function \"{callee_name}()\" requires the subtype \"{pl}\" but the supertype \"{al}\" was provided.",
-                        i + 1
+                        "The argument {} of the function \"{}()\" requires the subtype \"{pl}\" but the supertype \"{al}\" was provided.",
+                        i + 1,
+                        sig.name
                     ),
-                );
+                ),
+                // Narrowing / int-as-enum at an argument are deliberately left silent for
+                // now (pre-existing behavior; escalating them needs its own corpus pass).
+                Assign::Ok | Assign::Narrowing | Assign::IntAsEnum => {}
             }
         }
     }
 
-    /// The display name of a call's callee, for message wording — a bare `Name`, or the method
-    /// name of a `Field` call. `None` for computed callees (`(f())()`).
-    fn callee_display_name(&self, callee: ExprId) -> Option<SmolStr> {
+    /// The statically-resolved [`CallSignature`] of a callee. `None` when it isn't concretely
+    /// resolvable here — a `Callable` value / shadowing local (BUG A2), a cross-file script
+    /// method (params aren't modeled), a constructor (an overload set has no single arity), or
+    /// a seam receiver: those raise no call diagnostics.
+    fn call_signature(&self, callee: ExprId) -> Option<CallSignature> {
         match self.body.expr(callee) {
-            Expr::Name(n) => Some(n.clone()),
-            Expr::Field { name, .. } => Some(name.clone()),
-            _ => None,
-        }
-    }
-
-    /// Parameter types of a statically-resolved callee, for [`Self::check_call_args`]. `None` when
-    /// the callee isn't concretely resolvable here (a cross-file script method — params aren't
-    /// modeled —, a builtin/utility, a `Callable` value): those raise no argument warning.
-    fn call_param_tys(&self, callee: ExprId) -> Option<Vec<Ty>> {
-        match self.body.expr(callee) {
-            Expr::Name(name) => self.name_call_param_tys(name),
+            Expr::Name(name) => self.name_call_signature(name),
             Expr::Field { receiver, name, .. } => match self.expr_ty.get(receiver)? {
                 Ty::Object(class) => match self.api.lookup_member(*class, name)? {
-                    MemberRef::Method(sig) => Some(
-                        sig.params
-                            .iter()
-                            .map(|p| ty::resolve_tyref(self.api, &p.ty))
-                            .collect(),
-                    ),
+                    MemberRef::Method(sig) => Some(method_call_signature(self.api, sig)),
                     _ => None,
                 },
-                // ScriptRef / builtin / seam receivers: params not uniformly modeled — skip.
-                _ => None,
+                // Builtin receivers: the closed tables carry full `MethodSig`s (defaults +
+                // vararg), so calls check exactly like engine-class methods. ScriptRef /
+                // seam receivers stay skipped (params not uniformly modeled).
+                recv => {
+                    let bid = self.builtin_id_of(recv)?;
+                    let sig = self.api.builtin_method(bid, name)?;
+                    Some(method_call_signature(self.api, sig))
+                }
             },
             _ => None,
         }
     }
 
-    /// Parameter types for a bare-name call (`foo(...)` / an inherited `method(...)`): an own `func`
-    /// first, then the `self` engine base's method. Utilities/builtins are skipped (looser, often
-    /// variadic typing — out of the conservative MVP slice).
-    fn name_call_param_tys(&self, name: &str) -> Option<Vec<Ty>> {
+    /// The [`CallSignature`] for a bare-name call (`foo(...)` / an inherited `method(...)` /
+    /// a utility / a `@GDScript` pseudo-class function). Mirrors `resolve_call_name`'s tiers;
+    /// constructors (`Vector2(...)`) are deliberately not covered (overload sets).
+    fn name_call_signature(&self, name: &str) -> Option<CallSignature> {
         // A local/param shadows a same-named method for a bare-name call (BUG A2, mirroring
-        // `infer_call`'s locals-first resolution) — the local `Callable`'s params aren't modeled,
-        // so the shadowed method's signature must not arg-check the call.
+        // `infer_call`'s locals-first resolution) — the local `Callable`'s params aren't
+        // modeled, so the shadowed method's signature must not check the call.
         if self.locals.contains_key(name) {
             return None;
         }
         if let Some(item) = self.class.lookup(name)
             && let Some(Member::Func(f)) = self.class.member(item)
         {
-            return Some(
-                f.params
+            return Some(CallSignature {
+                name: f.name.clone(),
+                params: f
+                    .params
                     .iter()
                     .map(|p| {
                         p.type_ref.as_deref().map_or(Ty::Variant, |t| {
@@ -2505,17 +2563,43 @@ impl Cx<'_> {
                         })
                     })
                     .collect(),
-            );
+                required: f.params.iter().filter(|p| !p.has_default).count(),
+                // A `...rest` vararg param is not lowered into `params` (it has no fixed
+                // slot), so `params` are exactly the fixed ones — the flag absorbs surplus.
+                is_vararg: f.is_vararg,
+            });
         }
         if let Ty::Object(base) = self.class.base
             && let Some(MemberRef::Method(sig)) = self.api.lookup_member(base, name)
         {
-            return Some(
-                sig.params
+            return Some(method_call_signature(self.api, sig));
+        }
+        // Utility functions (`abs`, `clamp`, `absf`, …) — full signatures incl. the vararg
+        // flag (`print` and friends never arity-error: probed p15 vs p21).
+        if let Some(u) = self.api.utility(name) {
+            return Some(CallSignature {
+                name: SmolStr::new(&u.name),
+                params: u
+                    .params
                     .iter()
                     .map(|p| ty::resolve_tyref(self.api, &p.ty))
                     .collect(),
-            );
+                required: u.params.iter().filter(|p| p.default.is_none()).count(),
+                is_vararg: u.is_vararg,
+            });
+        }
+        // `@GDScript` pseudo-class functions (`range`, `len`, `str`, …): the layer models
+        // min/max arg counts only (their param types are looser — `Variant` slots keep the
+        // type loop silent); `max_args: None` is variadic. `preload` never reaches here
+        // (it lowers to its own expression kind).
+        if let Some(f) = self.api.gdscript_builtin(name) {
+            let fixed = usize::from(f.max_args.unwrap_or(f.min_args));
+            return Some(CallSignature {
+                name: SmolStr::new(f.name),
+                params: vec![Ty::Variant; fixed],
+                required: usize::from(f.min_args),
+                is_vararg: f.max_args.is_none(),
+            });
         }
         None
     }
@@ -4713,6 +4797,68 @@ mod tests {
                 .iter()
                 .any(|c| c == "ENUM_VARIABLE_WITHOUT_DEFAULT"),
             "{with_zero:?}"
+        );
+    }
+
+    #[test]
+    fn user_vararg_function_absorbs_surplus_arguments() {
+        // A `...rest` tail has no fixed slot (not lowered into `params`); the `is_vararg`
+        // flag must absorb any surplus so a 4.5-style vararg func never false-flags.
+        let c = file_codes(
+            "func v(a: int, ...rest) -> void:\n\tprint(a, rest)\n\nfunc t() -> void:\n\tv(1, 2, 3, 4)\n",
+        );
+        assert!(!c.iter().any(|x| x == "TOO_MANY_ARGUMENTS"), "{c:?}");
+        // …while the fixed prefix still counts as required.
+        let few = file_codes(
+            "func v(a: int, ...rest) -> void:\n\tprint(a, rest)\n\nfunc t() -> void:\n\tv()\n",
+        );
+        assert!(few.iter().any(|x| x == "TOO_FEW_ARGUMENTS"), "{few:?}");
+    }
+
+    #[test]
+    fn gdscript_builtin_arity_uses_min_max() {
+        // `range` is 1..=3 args in the `@GDScript` layer.
+        let few = file_codes("func t() -> void:\n\tfor i in range():\n\t\tprint(i)\n");
+        assert!(few.iter().any(|x| x == "TOO_FEW_ARGUMENTS"), "{few:?}");
+        let many = file_codes("func t() -> void:\n\tfor i in range(1, 2, 3, 4):\n\t\tprint(i)\n");
+        assert!(many.iter().any(|x| x == "TOO_MANY_ARGUMENTS"), "{many:?}");
+    }
+
+    #[test]
+    fn builtin_receiver_method_arity_checks() {
+        // Builtin tables carry full `MethodSig`s — `String.substr(from, len = -1)`.
+        let c = file_codes(
+            "func t() -> void:\n\tvar s: String = \"abc\"\n\tprint(s.substr(1, 2, 3))\n",
+        );
+        assert!(c.iter().any(|x| x == "TOO_MANY_ARGUMENTS"), "{c:?}");
+    }
+
+    #[test]
+    fn shadowing_local_callable_is_not_arity_checked() {
+        // BUG A2: a local `Callable` named like an own method must not be checked against
+        // the shadowed method's signature.
+        let c = file_codes(
+            "func work(a: int) -> void:\n\tprint(a)\n\nfunc t() -> void:\n\tvar work = func(): pass\n\twork()\n",
+        );
+        assert!(!c.iter().any(|x| x == "TOO_FEW_ARGUMENTS"), "{c:?}");
+    }
+
+    #[test]
+    fn constructors_are_not_arity_checked() {
+        // Constructor overload sets have no single arity — deliberately skipped
+        // (documented under-warn; Godot does check them).
+        let c = file_codes("func t() -> void:\n\tprint(Vector2(1.0, 2.0, 3.0, 4.0))\n");
+        assert!(!c.iter().any(|x| x == "TOO_MANY_ARGUMENTS"), "{c:?}");
+    }
+
+    #[test]
+    fn unresolved_callee_is_not_arity_checked() {
+        // The cross-file seam (workspace not complete): no signature, no arity claim.
+        let c = file_codes("func t() -> void:\n\tsome_cross_file_fn(1, 2, 3)\n");
+        assert!(
+            !c.iter()
+                .any(|x| x == "TOO_FEW_ARGUMENTS" || x == "TOO_MANY_ARGUMENTS"),
+            "{c:?}"
         );
     }
 

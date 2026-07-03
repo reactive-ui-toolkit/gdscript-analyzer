@@ -138,6 +138,10 @@ pub struct FuncItem {
     pub tuple_return: Option<Vec<SmolStr>>,
     /// Whether this is a `static func`.
     pub is_static: bool,
+    /// Whether the parameter list ends in a `...rest` vararg (Godot 4.5+). The vararg param
+    /// has no fixed slot, so it is NOT in [`params`](FuncItem::params) — arity checking reads
+    /// this flag to absorb any surplus arguments.
+    pub is_vararg: bool,
     /// The decorator annotations on this function (`@onready`, `@rpc`, …), in source order.
     pub annotations: Vec<AnnotationItem>,
     /// Pointer to the `FuncDecl` node, for body lowering.
@@ -294,6 +298,11 @@ fn lower_func(d: &ast::FuncDecl) -> FuncItem {
         return_type: d.return_type().and_then(|t| t.text()).map(SmolStr::new),
         tuple_return: doc_tuple_return(node),
         is_static: d.is_static(),
+        is_vararg: d.param_list().is_some_and(|pl| {
+            pl.syntax()
+                .children()
+                .any(|c| c.kind() == SyntaxKind::VarargParam)
+        }),
         annotations: preceding_annotations(node),
         ptr: AstPtr::of(node),
         range: cst::text_range_of(node),

@@ -574,6 +574,76 @@ fn narrowing_conversion() {
     );
 }
 
+// ---- call arity + argument errors (T4.3) ----------------------------------------------------
+
+#[test]
+fn too_many_arguments_own_function() {
+    // p09
+    let m = file_msgs("func one(a: int) -> void:\n\tprint(a)\n\nfunc t() -> void:\n\tone(1, 2)\n");
+    assert_emits(
+        &m,
+        "TOO_MANY_ARGUMENTS",
+        "Too many arguments for \"one()\" call. Expected at most 1 but received 2.",
+    );
+}
+
+#[test]
+fn too_few_arguments_own_function() {
+    // p10
+    let m = file_msgs(
+        "func two(a: int, b: int) -> void:\n\tprint(a, b)\n\nfunc t() -> void:\n\ttwo(1)\n",
+    );
+    assert_emits(
+        &m,
+        "TOO_FEW_ARGUMENTS",
+        "Too few arguments for \"two()\" call. Expected at least 2 but received 1.",
+    );
+}
+
+#[test]
+fn too_few_arguments_engine_method_counts_defaults() {
+    // p14 — `add_child(node, force_readable_name = false, internal = 0)`: one REQUIRED
+    // parameter; Godot's "at least" is the default-less count.
+    let m = file_msgs("func t() -> void:\n\tvar n := Node.new()\n\tn.add_child()\n");
+    assert_emits(
+        &m,
+        "TOO_FEW_ARGUMENTS",
+        "Too few arguments for \"add_child()\" call. Expected at least 1 but received 0.",
+    );
+}
+
+#[test]
+fn too_many_arguments_utility_function() {
+    // p21
+    let m = file_msgs("func t() -> void:\n\tprint(absf(1.0, 2.0))\n");
+    assert_emits(
+        &m,
+        "TOO_MANY_ARGUMENTS",
+        "Too many arguments for \"absf()\" call. Expected at most 1 but received 2.",
+    );
+}
+
+#[test]
+fn invalid_argument_type_is_a_hard_error() {
+    // p06 — Godot prints the generic `Cannot pass …` line too; the analyzer emits the
+    // site-specific text (the callee name is known here).
+    let m =
+        file_msgs("func take(i: int) -> void:\n\tprint(i)\n\nfunc t() -> void:\n\ttake(\"s\")\n");
+    assert_emits(
+        &m,
+        "TYPE_MISMATCH",
+        "Invalid argument for \"take()\" function: argument 1 should be \"int\" but is \"String\".",
+    );
+}
+
+#[test]
+fn variadic_calls_never_arity_error() {
+    // p15 — `print` is vararg.
+    let m = file_msgs("func t() -> void:\n\tprint(1, 2, 3)\n");
+    assert_absent(&m, "TOO_MANY_ARGUMENTS");
+    assert_absent(&m, "TOO_FEW_ARGUMENTS");
+}
+
 // ---- negative cases: the analyzer must be silent exactly where Godot is ---------------------
 
 #[test]
