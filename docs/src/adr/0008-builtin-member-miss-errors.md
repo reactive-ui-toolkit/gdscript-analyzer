@@ -39,3 +39,14 @@ and a project on a newer engine gets the weaker opt-in signal for genuinely-new 
 design. Corpus proof: the first run surfaced 111 `UNDEFINED_PROPERTY` hits across 138
 godot-demo-projects — all of them the Dictionary sugar shape — and zero after the keyed
 short-circuit; zero `UNDEFINED_METHOD` false positives throughout.
+
+## Addendum (2026-07-03 — T4.1 message parity)
+
+Godot 4.7 prints **two** lines for one builtin *method* miss — `Cannot find member "casll" in
+base "Callable".` (its member check) **and** `Function "casll()" not found in base Callable.`
+(its call check) — and only the member line for a *property* miss; a Dictionary method miss
+gets only the call line (the keyed sugar absorbs the member check). Earlier notes each quoted
+ONE of the two as "the" native phrasing and looked contradictory — both were real. The analyzer
+emits one diagnostic per site and mirrors the kind-matching text verbatim: the call-check
+wording for `UNDEFINED_METHOD`, the member wording for `UNDEFINED_PROPERTY`. The golden table
+(`crates/gdscript-hir/src/godot_messages_tests.rs`) pins both against the probed binary.

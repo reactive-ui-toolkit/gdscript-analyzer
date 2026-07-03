@@ -17,6 +17,8 @@ pub mod body;
 mod cst;
 pub mod def;
 pub mod flow;
+#[cfg(test)]
+mod godot_messages_tests;
 pub mod infer;
 pub mod item_tree;
 pub mod project;

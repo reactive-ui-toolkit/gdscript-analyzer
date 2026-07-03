@@ -12,7 +12,7 @@
 //! is unchanged — the enum is internal to `gdscript-hir`.
 
 use cstree::util::NodeOrToken;
-use gdscript_base::{Diagnostic, DiagnosticSource, Severity, TextRange};
+use gdscript_base::{Diagnostic, DiagnosticSource, DiagnosticTag, Severity, TextRange};
 use gdscript_syntax::{GdNode, SyntaxKind};
 use rustc_hash::FxHashMap;
 
@@ -142,11 +142,22 @@ pub enum WarningCode {
     /// A method call on a BUILT-IN receiver (`Callable`, `String`, `Vector2`, …) whose method does
     /// not exist. Builtin member tables are closed and bundled, so — unlike `Object` receivers,
     /// where a script can attach methods at runtime — this needs NO workspace-completeness claim:
-    /// Godot itself reports it as a compile error (`Function "casll()" not found in base Callable`).
+    /// Godot itself reports it as a compile error. 4.7 prints BOTH `Cannot find member "casll" in
+    /// base "Callable".` and `Function "casll()" not found in base Callable.` for one miss (its
+    /// member- and call-checks each fire); the analyzer emits the latter, one diagnostic per site.
     UndefinedMethod,
     /// A property/constant access on a BUILT-IN receiver that does not exist (`v.zzz` on a
     /// `Vector2`). Same closed-table reasoning as [`Self::UndefinedMethod`].
     UndefinedProperty,
+    /// A call passing fewer arguments than the callee's required (default-less) parameters —
+    /// a compile error in Godot (`Too few arguments for "f()" call. Expected at least N but
+    /// received M.`). Only fires on a statically-resolved own/engine/utility/builtin signature;
+    /// `Callable` values and cross-file seams stay silent.
+    TooFewArguments,
+    /// A call passing more arguments than the callee accepts — a compile error in Godot
+    /// (`Too many arguments for "f()" call. Expected at most N but received M.`). A variadic
+    /// callee (`print`, vararg engine methods) never fires it.
+    TooManyArguments,
 }
 
 /// Godot's `WarnLevel` (`gdscript_warning.h`): the resolved severity of a code.
@@ -251,6 +262,8 @@ impl WarningCode {
         Self::UndefinedIdentifier,
         Self::UndefinedMethod,
         Self::UndefinedProperty,
+        Self::TooFewArguments,
+        Self::TooManyArguments,
     ];
 
     /// The stable serialized identity — what `Diagnostic.code` carries (e.g. `INTEGER_DIVISION`).
@@ -311,6 +324,8 @@ impl WarningCode {
             Self::UndefinedIdentifier => "UNDEFINED_IDENTIFIER",
             Self::UndefinedMethod => "UNDEFINED_METHOD",
             Self::UndefinedProperty => "UNDEFINED_PROPERTY",
+            Self::TooFewArguments => "TOO_FEW_ARGUMENTS",
+            Self::TooManyArguments => "TOO_MANY_ARGUMENTS",
         }
     }
 
@@ -320,12 +335,35 @@ impl WarningCode {
         self.as_str().to_ascii_lowercase()
     }
 
+    /// The LSP rendering tags this code's diagnostics carry: `Unnecessary` (editors dim the
+    /// range) for the unused/unreachable family, matching VS Code's built-in convention.
+    /// No catalog code is `Deprecated`-tagged today; the arm exists for when one is.
+    #[must_use]
+    pub fn tags(self) -> &'static [DiagnosticTag] {
+        match self {
+            Self::UnusedVariable
+            | Self::UnusedLocalConstant
+            | Self::UnusedPrivateClassVariable
+            | Self::UnusedParameter
+            | Self::UnusedSignal
+            | Self::UnreachableCode
+            | Self::UnreachablePattern => &[DiagnosticTag::Unnecessary],
+            _ => &[],
+        }
+    }
+
     /// A one-line human description — the source of truth for the generated Warning Reference
     /// (Workstream 5). Kept terse and stable; an exhaustive `match` so a new code must add one.
     #[must_use]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one arm per catalog code by design — the exhaustive match IS the reference table"
+    )]
     pub fn description(self) -> &'static str {
         match self {
-            Self::UnassignedVariable => "A typed local is read before it is assigned a value.",
+            Self::UnassignedVariable => {
+                "An untyped or enum-typed local is read before it is assigned a value (a typed local is zero-initialized)."
+            }
             Self::UnassignedVariableOpAssign => {
                 "A compound assignment (`+=`, …) is applied to a still-unassigned local."
             }
@@ -422,6 +460,12 @@ impl WarningCode {
             Self::UndefinedProperty => {
                 "A property accessed on a built-in type does not exist on it (a compile error in Godot; the bundled built-in tables are closed, so no completeness claim is needed)."
             }
+            Self::TooFewArguments => {
+                "A call passes fewer arguments than the callee's required parameters (a compile error in Godot). Only statically-resolved signatures are checked."
+            }
+            Self::TooManyArguments => {
+                "A call passes more arguments than the callee accepts (a compile error in Godot). Variadic callees are never flagged."
+            }
         }
     }
 
@@ -448,7 +492,9 @@ impl WarningCode {
             | Self::UndefinedFunction
             | Self::UndefinedIdentifier
             | Self::UndefinedMethod
-            | Self::UndefinedProperty => WarnLevel::Error,
+            | Self::UndefinedProperty
+            | Self::TooFewArguments
+            | Self::TooManyArguments => WarnLevel::Error,
             // Everything else defaults to WARN.
             _ => WarnLevel::Warn,
         }
@@ -769,6 +815,7 @@ pub fn gate(
         message: raw.message.clone(),
         source: DiagnosticSource::Type,
         fixes: Vec::new(),
+        tags: raw.code.tags().to_vec(),
     })
 }
 
@@ -987,6 +1034,20 @@ mod tests {
     }
 
     #[test]
+    fn unused_and_unreachable_diagnostics_carry_the_unnecessary_tag() {
+        let none = SuppressionMap::default();
+        let s = WarningSettings::analyzer_default();
+        for code in [WarningCode::UnusedVariable, WarningCode::UnreachableCode] {
+            let d = gate(&raw(code), &s, &none, None).unwrap();
+            assert_eq!(d.tags, vec![gdscript_base::DiagnosticTag::Unnecessary]);
+        }
+        // A non-rendering-hint code carries none. (The wire shape — `tags: [1]` present /
+        // omitted when empty — is pinned at the session layer, where JSON crossing happens.)
+        let plain = gate(&raw(WarningCode::IntegerDivision), &s, &none, None).unwrap();
+        assert!(plain.tags.is_empty());
+    }
+
+    #[test]
     fn every_code_has_a_unique_uppercase_string_that_round_trips() {
         let mut seen = HashSet::new();
         for &c in WarningCode::ALL {
@@ -995,7 +1056,7 @@ mod tests {
             assert_eq!(WarningCode::from_setting_name(&c.setting_name()), Some(c));
         }
         // The set is the catalog; a missed `ALL` entry shows up as a short count.
-        assert_eq!(seen.len(), 53);
+        assert_eq!(seen.len(), 55);
     }
 
     #[test]

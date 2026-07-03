@@ -87,6 +87,16 @@ impl AnalysisHandle {
         self.session.set_workspace_complete(complete);
     }
 
+    /// Select the warning-gating profile: `"engine-defaults"` matches Godot's own default
+    /// levels (the `UNSAFE_*` opt-in family stays silent — an editor must not warn where the
+    /// engine wouldn't), `"strict"` promotes the safety opt-ins to WARN, `"none"` restores the
+    /// auto default (standalone ⇒ strict, project ⇒ engine defaults). Unknown strings are
+    /// ignored (forward-compatible).
+    #[napi]
+    pub fn set_warning_override(&mut self, mode: String) {
+        self.session.set_warning_override(&mode);
+    }
+
     /// Whether `uri` is currently open. Lets a client distinguish "file not tracked" from a genuine
     /// empty result (the array queries return `[]` and the `null`-returning queries `null` for both).
     #[napi]
