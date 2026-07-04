@@ -1,7 +1,8 @@
 # Consuming from Rust
 
-> **Status:** the API surface is fixed here; the implementation lands in
-> **Phase 1+** ([`plans/ROADMAP.md`](https://github.com/yanivkalfa/gdscript-analyzer/blob/master/plans/ROADMAP.md)).
+> **Status: live.** This is the real, shipped `gdscript-ide` surface
+> ([`plans/ROADMAP.md`](https://github.com/yanivkalfa/gdscript-analyzer/blob/master/plans/ROADMAP.md)
+> tracks what's still ahead on the road to `1.0`, when this surface freezes).
 
 Native Rust consumers depend on a single crate, **`gdscript-ide`**:
 
@@ -36,18 +37,22 @@ pub struct Analysis { /* ... */ }
 **byte offsets** and returning POD wrapped in `Cancellable<T>`:
 
 ```rust,ignore
-analysis.diagnostics(file)?;        // Vec<Diagnostic>
-analysis.completions(pos)?;         // Vec<CompletionItem>
-analysis.hover(pos)?;               // Option<HoverResult>
-analysis.signature_help(pos)?;      // Option<SignatureHelp>
-analysis.goto_definition(pos)?;     // Vec<NavTarget>
-analysis.find_references(pos)?;     // Vec<Reference>
-analysis.rename(pos, "new_name")?;  // Result<SourceChange, RenameError>
-analysis.document_symbols(file)?;   // Vec<DocumentSymbol>
-analysis.workspace_symbols("q")?;   // Vec<NavTarget>
-analysis.semantic_tokens(file)?;    // SemanticTokens
-analysis.inlay_hints(file)?;        // Vec<InlayHint>
-analysis.format(file)?;             // Option<SourceChange>
+analysis.diagnostics(file)?;         // Vec<Diagnostic>
+analysis.completions(pos)?;          // Vec<CompletionItem>
+analysis.hover(pos)?;                // Option<HoverResult>
+analysis.signature_help(pos)?;       // Option<SignatureHelp>
+analysis.goto_definition(pos)?;      // Vec<NavTarget>
+analysis.find_references(pos)?;      // Vec<Reference>
+analysis.rename(pos, "new_name")?;   // Result<SourceChange, RenameError>
+analysis.document_symbols(file)?;    // Vec<DocumentSymbol>
+analysis.workspace_symbols("q")?;    // Vec<NavTarget>
+analysis.semantic_tokens(file)?;     // Vec<SemanticToken>
+analysis.inlay_hints(file)?;         // Vec<InlayHint>
+analysis.folding_ranges(file)?;      // Vec<FoldRange>
+analysis.code_actions(pos)?;         // Vec<CodeAction>
+analysis.format(file)?;              // Option<String> — the reformatted file
+analysis.format_range(file, s, e)?;  // Option<(u32, u32, String)>
+analysis.syntax_tree(file)?;         // Option<String> — debug CST dump
 ```
 
 ## The rules of the surface

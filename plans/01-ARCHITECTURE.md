@@ -1,6 +1,7 @@
 # 01 — Architecture
 
 > Canonical technical reference. Fixes the crate layering, the public API shape, the FFI/WASM strategy, the incremental-computation decision, the data model, and the portability rules. Every phase doc obeys this.
+> **Status:** implemented as designed, with one amendment — the FFI/WASM split described in §4 (a single `gdscript-ffi` crate targeting both napi and wasm32) shipped instead as two crates (`gdscript-ffi` for napi, `gdscript-wasm` for wasm-bindgen) sharing a `gdscript-session` core; see [ADR-0003](https://github.com/yanivkalfa/gdscript-analyzer/blob/master/docs/src/adr/0003-napi-rs-v3-dual-target.md)'s amendment. Everything else (crate stack, `AnalysisHost`/`Analysis`, portability rules, salsa adoption) matches what's live today — see [`CLAUDE.md`](https://github.com/yanivkalfa/gdscript-analyzer/blob/master/CLAUDE.md).
 
 Evidence base: [`research/06-analyzer-architecture.md`](research/06-analyzer-architecture.md) (layering, `AnalysisHost`/`Analysis`, FFI), [`research/01`](research/01-rust-distribution-tooling.md) (binding crates), [`research/02`](research/02-parsing-strategy.md) (parser), [`research/08`](research/08-wasm-web-and-bindings.md) (portability), [`research/09`](research/09-type-system-and-inference.md) (semantic layer).
 

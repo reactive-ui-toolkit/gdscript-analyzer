@@ -1,9 +1,9 @@
 # Install
 
-> **Status: Phase 0.** The packages described here are not yet published. The
-> commands below show the intended install story for the `0.x` line; they are
-> documented now so the surface is fixed before the first release. See
-> [`plans/ROADMAP.md`](https://github.com/yanivkalfa/gdscript-analyzer/blob/master/plans/ROADMAP.md).
+> **Status: live.** Every package below is published on crates.io and npm today
+> (workspace `0.5.x`). See
+> [`plans/ROADMAP.md`](https://github.com/yanivkalfa/gdscript-analyzer/blob/master/plans/ROADMAP.md)
+> for what's still ahead on the road to `1.0`.
 
 ## Toolchain (contributors)
 
@@ -26,7 +26,7 @@ The public Rust crate is **`gdscript-ide`** — the `AnalysisHost` / `Analysis`
 surface that external Rust consumers depend on:
 
 ```bash
-cargo add gdscript-ide   # coming in the 0.x line
+cargo add gdscript-ide
 ```
 
 The lower-level crates (`gdscript-base`, `gdscript-syntax`, `gdscript-api`, …)
@@ -38,7 +38,7 @@ are published too, but most consumers only need `gdscript-ide`. See
 The napi-rs native addon is published under the `@gdscript-analyzer` scope:
 
 ```bash
-npm i @gdscript-analyzer/core    # coming in the 0.x line
+npm i @gdscript-analyzer/core
 # pnpm add @gdscript-analyzer/core
 ```
 
@@ -55,7 +55,8 @@ A WebAssembly build ships as a separate npm package
 
 ## Versioning
 
-crates.io and npm move in **lockstep on a single shared version**, starting
-`0.1.0`. While in `0.x`, a breaking change bumps the *minor* and a new feature
+crates.io and npm move in **lockstep on a single shared version** (currently
+`0.5.x`). While in `0.x`, a breaking change bumps the *minor* and a new feature
 is a *patch* (Cargo's 0.x SemVer reading). The contract every consumer builds on
-is the `gdscript-ide` API surface.
+is the `gdscript-ide` API surface — it will be frozen (`#[non_exhaustive]`,
+semver-stable) at the `1.0` cut; see [the roadmap](../roadmap.md).

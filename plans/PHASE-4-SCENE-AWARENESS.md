@@ -1,6 +1,6 @@
 # PHASE 4 — Scene Awareness (Tier 3 slice) — ★ THE KILLER FEATURE ★
 
-> **Status:** plan. **Tier:** 3 (slice). **Delivers:** node-path typing the Godot editor LSP cannot produce — `$Panel/VBox/StartButton` infers `Button`, with **zero annotations**.
+> **Status:** ✅ **COMPLETE (the 90% slice)** — shipped; `$Path`/`%Unique`/`get_node()` typing, sub-scene recursion, scene-aware diagnostics/navigation/rename are all live and corpus-validated. A couple of rare edge cases stay open — see `TECH_DEBT.md`. This doc is the design plan; see [`PHASE-4-M0-PLAYBOOK.md`](PHASE-4-M0-PLAYBOOK.md) for the as-built parser record. **Tier:** 3 (slice). **Delivers:** node-path typing the Godot editor LSP cannot produce — `$Panel/VBox/StartButton` infers `Button`, with **zero annotations**.
 > **Canonical parents this doc obeys:** [`01-ARCHITECTURE.md`](01-ARCHITECTURE.md) (§1 crate stack — the new `gdscript-scene` crate; §2 the `AnalysisHost`/`Analysis` API; §5 data model; §7 portability), [`ROADMAP.md`](ROADMAP.md) (Phase 4 deliverable + exit criteria, Tier 3 slice, "pull a slice forward after Phase 2").
 > **Primary evidence:** [`research/09-type-system-and-inference.md`](research/09-type-system-and-inference.md) **§5 (Scene awareness — the killer feature)**, §2.4 (node-path typing), §3.4/§7 (the early-slice recommendation); [`research/04-gdscript-semantics-and-features.md`](research/04-gdscript-semantics-and-features.md) §1.9 (`$ % &"" ^"" get_node`), §1.10 (`@onready`), §3.4 (the `.tscn` extraction model), §3.7 (authoritative vs derived files).
 

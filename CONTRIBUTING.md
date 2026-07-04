@@ -9,9 +9,12 @@ This guide covers everything you need to build, test, and submit a change. If
 anything here is out of date or unclear, please open an issue — fixing the
 contributor experience is itself a welcome contribution.
 
-> **Project status:** Phase 0 (ecosystem & tooling). The repository is
-> scaffolding that *compiles and releases* — there are no analyzer features
-> yet. See [`plans/ROADMAP.md`](plans/ROADMAP.md).
+> **Project status:** feature-complete through Phase 6 (`0.5.x` on crates.io +
+> npm) — parse/type diagnostics, hover, completion, the full LSP-grade query
+> surface, the Godot 4.x engine model, scene-aware node-path typing, and a
+> `gdformat`-compatible formatter are all live. What's left is rounding out the
+> warning catalog + narrowing precision tail and the `1.0` API freeze — see
+> [`plans/ROADMAP.md`](plans/ROADMAP.md) and [`TECH_DEBT.md`](TECH_DEBT.md).
 
 ---
 
@@ -33,17 +36,20 @@ authoritative layout and dependency rules.
 | Crate | Role |
 |---|---|
 | `gdscript-base` | POD primitives (`FileId`, `TextSize`/`TextRange`, `LineIndex`). |
-| `gdscript-syntax` | Lexer / lossless CST / parser (Phase 1). |
+| `gdscript-syntax` | Lexer / lossless CST / parser. |
 | `gdscript-api` | Engine model; the `extension_api.json` codegen output lands here. |
-| `gdscript-db` | VFS / project model (Phase 3). |
-| `gdscript-hir` | Semantic layer — name resolution, type inference (Phase 2/3). |
+| `gdscript-scene` | `.tscn` / `.tres` parser → node-path typing. |
+| `gdscript-fmt` | `gdformat`-compatible formatter (`format` / `format_range`). |
+| `gdscript-db` | VFS / project model / the salsa incremental query graph. |
+| `gdscript-hir` | Semantic layer — name resolution, gradual type inference, warnings. |
 | `gdscript-ide` | **The public API** (`AnalysisHost` / `Analysis`); the wasm-check target. |
-| `gdscript-scene` | `.tscn` / `.tres` parser (Phase 4). |
-| `gdscript-ffi` | The single napi/wasm binding crate (`cdylib` + `lib`). |
-| `gdscript-lsp` | LSP server binary — one client of the library (Phase 5). |
-| `gdscript-cli` | CLI binary — `check`/`lint`/`format`/`symbols` (Phase 5). |
-| `bindings/node` | napi-rs npm package (`@gdscript-analyzer/core`). |
-| `bindings/wasm` | wasm-bindgen fallback package (`@gdscript-analyzer/wasm`). |
+| `gdscript-session` | Internal URI-keyed layer over `gdscript-ide` → `serde_json::Value` (not a stable API; shared by the napi + wasm bindings). |
+| `gdscript-ffi` | The napi-rs v3 Node binding (`@gdscript-analyzer/core`). |
+| `gdscript-wasm` | The wasm-bindgen browser binding (`@gdscript-analyzer/wasm`). |
+| `gdscript-lsp` | Standalone, spec-compliant LSP server binary — one client of the library. |
+| `gdscript-cli` | CLI binary — `check`/`lint`/`format`/`symbols` for CI/pre-commit. |
+| `bindings/node` | npm package wrapper around `gdscript-ffi` (`@gdscript-analyzer/core`). |
+| `bindings/wasm` | npm package wrapper around `gdscript-wasm` (`@gdscript-analyzer/wasm`). |
 | `xtask` | The build automation binary (`cargo xtask …`). |
 
 The public Rust API crate is **`gdscript-ide`** — that is what downstream Rust
@@ -99,16 +105,13 @@ cargo test  --workspace
 # Regenerate the engine-data artifact from the vendored extension_api.json
 cargo xtask codegen-api
 
-# napi (Node) package
+# napi (Node) package — @gdscript-analyzer/core
 cd bindings/node && pnpm install && napi build --platform --release && cd ../..
 
 # All distributable artifacts at once (napi + wasm)
 cargo xtask dist
 
-# wasm package directly
-#   route A (default): the napi wasm target
-napi build --platform --release --target wasm32-wasip1-threads    # run in bindings/node
-#   route B (fallback): wasm-bindgen
+# wasm package — @gdscript-analyzer/wasm (wasm-bindgen)
 wasm-pack build bindings/wasm --target web --profile wasm-release
 ```
 
@@ -119,7 +122,7 @@ wasm-pack build bindings/wasm --target web --profile wasm-release
 The core crates **must compile to `wasm32-unknown-unknown`**. This is the single
 most important invariant in the project and is CI-enforced on `gdscript-ide`
 (the public surface) on every PR. In the core crates
-(`gdscript-base`/`-syntax`/`-api`/`-db`/`-hir`/`-ide`/`-scene`):
+(`gdscript-base`/`-syntax`/`-api`/`-scene`/`-fmt`/`-db`/`-hir`/`-ide`/`-session`):
 
 - **No `std::fs`** (or any filesystem access). File contents are *injected* into
   the analysis host by the caller.

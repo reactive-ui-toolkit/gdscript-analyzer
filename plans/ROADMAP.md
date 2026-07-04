@@ -2,7 +2,7 @@
 
 > Canonical. Fixes the phase order, what ships in each, the Tier 0→3 mapping, and the dependency graph. Phase docs hold the detail; this fixes the *sequence* and *exit criteria*.
 
-> **Current status (2026-06):** Phase 0 ✅ and Phase 1 ✅ are **COMPLETE and shipped to `master`** (CI green; both the Node and browser FFI demos pass). Broad real-corpus hardening of the parser is ongoing. **Active next: Phase 2 (the MVP).**
+> **Current status (2026-07):** Phases 0–5 are **COMPLETE and shipped** to crates.io + npm (workspace `0.5.x`); the MVP (end of Phase 2) and the killer scene-awareness feature (Phase 4) are both live, and Phase 5's clients (`gdscript-lsp`, `gdscript-cli`, the napi + wasm bindings, the web playground) all ship. **Phase 6 is in progress** — most of its scope has landed (the warning-gate machinery + most of the 48-code catalog, real CFG flow narrowing, a `gdformat`-compatible formatter at ~100% corpus parity, perf benches, and the docs sweep); what remains is a deliberately-deferred additive tail (see [`TODO.md`](TODO.md) and [`TECH_DEBT.md`](../TECH_DEBT.md)) plus **W6 — the `1.0` API freeze**, held for last by design. The analyzer is **feature-complete through Phase 6** today; `1.0` is a stability/semver milestone, not a feature gate.
 
 ## The shape of the build
 
@@ -48,27 +48,32 @@ Phase 6 ── v1.0 RELEASE (Tier 3 full)
 **Exit criteria:** parses the entire Godot demo-projects corpus + a fixtures suite with zero panics and lossless round-trip (CST → source byte-identical); differential test vs tree-sitter passes; a Node script and a browser page both load the binding and get document symbols for a `.gd` file. **No Godot editor anywhere in the loop.**
 **Doc:** [`PHASE-1-PARSER-AND-SYNTAX-MVP.md`](PHASE-1-PARSER-AND-SYNTAX-MVP.md).
 
-### Phase 2 — API + Single-File Semantics *(Tier 1)* — **★ MVP ★**
+### Phase 2 — API + Single-File Semantics *(Tier 1)* — **★ MVP ★** — ✅ **COMPLETE**
+**Status:** shipped; the MVP exit bar is met and the API/HIR surface has since been extended by every later phase.
 **Ships:** `gdscript-api` fully wired (engine classes/inheritance/methods/properties/signals/enums + hand-authored GDScript layer + doc-XML hover); `gdscript-hir` single-file: name resolution (locals, members, `self`, inherited, globals), **gradual type inference** (`:=`, annotations, member access, returns, `is`/`as` narrowing), and the core type/safety diagnostics. Features: **hover with inferred types, member completion, signature help, inlay hints (inferred types), annotation/keyword/global completion, parse+type diagnostics, basic code actions** ("add type annotation", "import/preload").
 **Exit criteria (= MVP):** on a single `.gd` file with no project context, completion after `button.` lists `Button`/`Control`/`Node` members; hover on `var x := get_node(...)` shows the inferred type; type-mismatch + a subset of the Godot `UNSAFE_*` warnings fire with engine-matching messages; **guitkx can replace its `godotProxy.ts` completion+hover path** for embedded GDScript using the napi build (validated against the guitkx repo). Performance: <50ms cold single-file analysis, <5ms warm.
 **Doc:** [`PHASE-2-API-AND-SINGLE-FILE-SEMANTICS.md`](PHASE-2-API-AND-SINGLE-FILE-SEMANTICS.md).
 
-### Phase 3 — Project-Wide & Incremental *(Tier 2)*
+### Phase 3 — Project-Wide & Incremental *(Tier 2)* — ✅ **COMPLETE**
+**Status:** shipped (M0–M5 all landed: salsa substrate, `class_name` registry, base-chain inheritance, `preload`/`extends` resolution, autoloads + `is`/`as` narrowing, cross-file goto/find-refs/rename/workspace-symbols). One narrow follow-up (inner-member navigation qualification) is open and tracked in `TECH_DEBT.md`.
 **Ships:** the project model in `gdscript-db` (workspace scan, VFS, `project.godot` parse → autoloads + global groups + Godot version detection); the `class_name` global registry; `preload`/`load`/`extends` cross-file resolution; cross-file **go-to-definition, find-references, rename, workspace symbols**; **salsa** adopted for incremental recompute with durability. This phase holds most of the engineering risk (stale-cache invalidation).
 **Exit criteria:** on a real multi-file Godot project, rename a `class_name` symbol and all references across files update; find-references on a method is complete and correct; editing one file does **not** re-type-check the whole project (measured: keystroke latency flat as project grows); autoload singletons complete globally.
 **Doc:** [`PHASE-3-PROJECT-WIDE-AND-INCREMENTAL.md`](PHASE-3-PROJECT-WIDE-AND-INCREMENTAL.md).
 
-### Phase 4 — Scene Awareness *(Tier 3 slice — the killer feature)*
+### Phase 4 — Scene Awareness *(Tier 3 slice — the killer feature)* — ✅ **COMPLETE (the 90% slice)**
+**Status:** shipped — `.tscn`/`.tres` parsing, node-path typing, instanced sub-scene recursion (M0–M3), scene-aware diagnostics/navigation/rename (M2, W8) are all live and validated against the godot-demo-projects corpus. A couple of rare edge cases (e.g. an inline `script = SubResource(...)`) stay open, tracked in `TECH_DEBT.md`.
 **Ships:** `gdscript-scene` (`.tscn`/`.tres` text parser → node tree with types, scripts, instanced sub-scenes); typing of `$Path`, `%Unique`, `@onready var x = $Path`, and `get_node("...")` by resolving the owning scene's node type; diagnostics for invalid node paths. Start with the 90% slice (direct `type=` nodes in the single owning scene) — a thin version can be **pulled forward** after Phase 2 as a wow-demo.
 **Exit criteria:** `$Panel/VBox/StartButton` infers `Button` (not just `Node`) with zero annotations; an invalid `$DoesNotExist` path warns; attached-script types refine node types. This is intelligence the Godot editor LSP cannot produce.
 **Doc:** [`PHASE-4-SCENE-AWARENESS.md`](PHASE-4-SCENE-AWARENESS.md).
 
-### Phase 5 — Clients & Distribution *(parallelizable from Phase 2)*
+### Phase 5 — Clients & Distribution *(parallelizable from Phase 2)* — ✅ **COMPLETE** (in this repo)
+**Status:** `gdscript-lsp`, `gdscript-cli`, the napi binding (`@gdscript-analyzer/core`), the wasm binding (`@gdscript-analyzer/wasm`), and the web playground are all shipped and published. The **guitkx integration** itself (deleting `godotProxy.ts` in the *ReactiveUI-Godot* repo) is consumer-side follow-up work tracked in that repo, not an analyzer gap — see `TECH_DEBT.md` §7.
 **Ships:** `gdscript-lsp` (a real, standalone, spec-compliant LSP server — with semantic tokens, inlay hints, workspace symbols, rename that the engine LSP lacks); the **guitkx integration** (delete `godotProxy.ts`, consume the napi package via a Volar-style source-map adapter); `gdscript-cli`; the **WASM web playground** (Monaco/CodeMirror, à la Ruff/Biome); and the published packages on **crates.io + npm** (per-platform napi binaries + wasm) GA, with the web playground live.
 **Exit criteria:** the standalone LSP works in VS Code/Neovim with no Godot running; guitkx ships with the proxy removed; `npm i @gdscript-analyzer/core` + `cargo add gdscript-ide` both work; the playground analyzes pasted GDScript in-browser.
 **Doc:** [`PHASE-5-CLIENTS-AND-DISTRIBUTION.md`](PHASE-5-CLIENTS-AND-DISTRIBUTION.md).
 
-### Phase 6 — v1.0 Release *(Tier 3 full)*
+### Phase 6 — v1.0 Release *(Tier 3 full)* — 🟡 **IN PROGRESS** (feature scope largely landed; the freeze is deliberately last)
+**Status:** the warning-gate machinery + most of the 48-code catalog, real CFG-based flow narrowing, a `gdformat`-compatible formatter (~100% byte-exact on the reference corpus), performance benches, and the docs sweep have all landed on `0.x` releases. What remains is a deliberately-deferred additive tail (a handful of warning checks, narrowing-precision edge cases — each ships as a clean post-freeze PATCH) and **W6, the `#[non_exhaustive]` API freeze + the `1.0` tag itself**, held for last by design so nothing else has to work around a frozen surface. See [`PHASE-6-EXECUTION-OVERVIEW.md`](PHASE-6-EXECUTION-OVERVIEW.md) and [`TECH_DEBT.md`](../TECH_DEBT.md) for the itemized state.
 **Ships:** the complete Godot **48-warning** set with project-setting gating; full control-flow narrowing (beating the engine checker on `is`/`as` guards); a formatter (gdformat-compatible or better); performance hardening (large-project benchmarks); complete docs + "add a client" guide; stabilized semver'd 1.0 API.
 **Exit criteria:** the v1.0 success bar in [`00-VISION-AND-SCOPE.md`](00-VISION-AND-SCOPE.md) §6 — real projects, scene typing, full warnings, stable packages, a live playground, and ≥1 external consumer beyond guitkx/our own clients.
 **Doc:** [`PHASE-6-V1-RELEASE.md`](PHASE-6-V1-RELEASE.md).

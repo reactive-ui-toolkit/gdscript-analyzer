@@ -1,15 +1,14 @@
 # Editor / LSP Client Integration
 
-> **Status: forthcoming.** A standalone LSP server (`gdscript-lsp`) and the
-> editor setup matrix land in **Phase 5**
-> ([`plans/ROADMAP.md`](https://github.com/yanivkalfa/gdscript-analyzer/blob/master/plans/ROADMAP.md)). This page is the seed for
-> the "add an LSP client" guide and will grow as the server matures — modeled on
-> rust-analyzer's "Other Editors" documentation.
+> **Status: live.** The standalone LSP server (`gdscript-lsp`) is shipped and
+> spec-compliant. The per-editor setup snippets below are still being filled in
+> — modeled on rust-analyzer's "Other Editors" documentation — contributions
+> welcome (see [`CONTRIBUTING.md`](https://github.com/yanivkalfa/gdscript-analyzer/blob/master/CONTRIBUTING.md)).
 
 Because gdscript-analyzer is a [library, not a server](../adr/0001-rust-library-not-server.md),
 there are two distinct ways to integrate it into an editor.
 
-## Option A — use the standalone LSP server (Phase 5)
+## Option A — use the standalone LSP server
 
 `gdscript-lsp` is a real, standalone, spec-compliant Language Server. Unlike the
 engine's built-in LSP, it does **not** require a running Godot editor, and it
@@ -21,7 +20,8 @@ symbols, rename). You point any LSP-capable editor at the server binary:
 - **Helix, Zed, Emacs (eglot/lsp-mode), Sublime (LSP)** — standard LSP client
   configuration pointing at the `gdscript-lsp` executable.
 
-Each editor's concrete setup snippet will live here once the server ships.
+Concrete per-editor setup snippets are being filled in here as they're
+validated.
 
 ## Option B — embed the library directly
 

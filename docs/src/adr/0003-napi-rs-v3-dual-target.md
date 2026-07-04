@@ -75,3 +75,19 @@ wasm-bindgen is kept as a documented, optional fallback — not the primary path
 - The "strings and structs cross by copy" rule must be respected by every query
   — returning large payloads (e.g. a full AST) per call would be a performance
   cliff on the WASM boundary.
+
+## Amendment (as-shipped, post-Phase-5)
+
+**The napi-wasm route described above was not what shipped.** In practice the
+browser binding is a separate crate (`bindings/wasm`, published as
+`@gdscript-analyzer/wasm`) built with **wasm-bindgen**, not the napi-rs
+`wasm32-wasip1-threads` target — i.e. the "documented fallback" above became
+the actual, only browser path. What *was* kept from this decision: **one
+shared, engine-neutral core** (`gdscript-session`) that both the napi binding
+(`gdscript-ffi`) and the wasm-bindgen binding (`bindings/wasm`) delegate to, so
+the two surfaces still can't drift apart — the sharing just moved one layer
+down (a session crate, not a single FFI crate compiled twice). The MSRV
+consequence (1.88.0, napi-rs v3's floor) still applies, since `gdscript-ffi`
+is still on napi-rs v3 for Node. This ADR's *Context* and *Decision* are kept
+verbatim as the historical record; treat this section, not the body above, as
+authoritative for the current architecture.
