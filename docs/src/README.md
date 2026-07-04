@@ -51,7 +51,7 @@ analysis is in [`plans/00-VISION-AND-SCOPE.md`](https://github.com/yanivkalfa/gd
 
 The analyzer is **feature-complete through its planned phases** and ships on
 both registries (crates.io workspace + `@gdscript-analyzer/core` on npm, moving
-in lockstep — 0.6.0 at the time of writing). Live today:
+in lockstep — `0.5.x` at the time of writing). Live today:
 
 - **Diagnostics** — parse + type errors and the gateable GDScript warning
   catalog, with **Godot's own verbatim message texts** (probed against the real
