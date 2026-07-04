@@ -1,6 +1,7 @@
 # 00 — Vision & Scope
 
 > Canonical. Defines what `gdscript-analyzer` is, why it exists, who consumes it, what it will and won't do, and how we'll know it succeeded.
+> **Status:** the vision holds; the analyzer is feature-complete through Phase 6 (see [`ROADMAP.md`](ROADMAP.md)) and this doc's framing has not needed revision as the build progressed.
 
 ## 1. One-sentence definition
 
