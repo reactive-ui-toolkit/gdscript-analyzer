@@ -1,9 +1,8 @@
 # Quickstart
 
-> **Status: forthcoming.** The analysis API lands in **Phase 1+** (see
-> [`plans/ROADMAP.md`](https://github.com/yanivkalfa/gdscript-analyzer/blob/master/plans/ROADMAP.md)). The sketch below shows the
-> *intended shape* of the smallest possible "analyze a `.gd` string" program so
-> the surface is fixed early. It does not compile against the Phase-0 stubs yet.
+> **Status: live.** The analysis API below is the real, shipped `gdscript-ide`
+> surface (see [`plans/ROADMAP.md`](https://github.com/yanivkalfa/gdscript-analyzer/blob/master/plans/ROADMAP.md)
+> for what's still ahead on the road to `1.0`).
 
 The library is built around two types modeled on rust-analyzer:
 
@@ -16,16 +15,18 @@ All inputs are a `FileId` plus **byte offsets**; all results are POD structs
 (serde-serializable), with **no `lsp-types`** in the core. The client converts
 byte offsets to UTF-16 and codes to its protocol.
 
-## Analyze a single `.gd` string (forthcoming)
+## Analyze a single `.gd` string
 
 ```rust,ignore
+// (marked `ignore` only because `mdbook test` can't resolve the external
+// `gdscript-ide` crate from a bare fenced block — the code itself is real.)
 use gdscript_ide::{AnalysisHost, Change, FileId};
 
 fn main() {
     // 1. Create a host and push a file's contents through a Change.
     //    The library never reads the filesystem itself — text is injected.
     let mut host = AnalysisHost::new();
-    let file = FileId::from_raw(0);
+    let file = FileId(0);
 
     let source = r#"
 extends Node
@@ -36,7 +37,7 @@ func _ready() -> void:
 "#;
 
     let mut change = Change::new();
-    change.set_file_text(file, source.into());
+    change.change_file(file, source);
     host.apply_change(change);
 
     // 2. Take an immutable snapshot and run read queries.
@@ -61,9 +62,10 @@ The same `Analysis` snapshot exposes `completions`, `hover`, `goto_definition`,
 [`plans/01-ARCHITECTURE.md`](https://github.com/yanivkalfa/gdscript-analyzer/blob/master/plans/01-ARCHITECTURE.md) §2 for the
 authoritative API sketch.
 
-## What works today (Phase 0)
+## What works today
 
-Right now the repository builds, tests, lints, and produces empty napi + wasm
-binding stubs — proving the toolchain end to end. The first *real* feature set
-(parse diagnostics, document symbols, folding, by-name completion) arrives in
-**Phase 1**; inference-backed hover and completion in **Phase 2** (the MVP).
+Everything above is live: parse + type diagnostics, type-aware hover and
+completion, the full LSP-grade query surface (signature help, folding, inlay
+hints, code actions, semantic tokens), scene-aware node-path typing, and a
+`gdformat`-compatible formatter. See the [Roadmap](../roadmap.md) for what's
+still ahead on the road to `1.0`.

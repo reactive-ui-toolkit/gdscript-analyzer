@@ -13,38 +13,45 @@ the layers above them. The authoritative version is in
 | `gdscript-base` | POD types: `FileId`, `TextSize`/`TextRange`, `LineIndex`, position/range conversions, the serde result structs shared with clients. No logic. | — | ✅ |
 | `gdscript-syntax` | Lexer (`logos`) + indentation pre-pass + hand-written recursive-descent parser → lossless `cstree` CST + typed AST. Error recovery. | base | ✅ |
 | `gdscript-api` | The Godot engine model generated from `extension_api.json` + doc XML: classes, inheritance, methods, properties, signals, enums, singletons, utility functions, builtins — plus the hand-authored GDScript layer (keywords, annotations, builtins) the dump omits. | base | ✅ |
-| `gdscript-db` | Input layer: a virtual file system (`FileId` → text, **injected**, never `std::fs`), the project model, `apply_change`. MVP: plain maps; v1: salsa inputs + tracked queries. | base, syntax, api | ✅ |
-| `gdscript-hir` | Semantic layer: lower AST → HIR, scope tree, name resolution, gradual type inference, the GDScript warning checks. | base, syntax, api, db | ✅ |
+| `gdscript-scene` | `.tscn`/`.tres` text parser → node-tree model for `$Path`/`%Unique` node-path typing. | base | ✅ |
+| `gdscript-fmt` | A `gdformat`-compatible formatter: `format`/`format_range`, safe-by-construction (falls back to the original source if it can't prove the reformat is meaning-preserving). | base, syntax | ✅ |
+| `gdscript-db` | Input layer: a virtual file system (`FileId` → text, **injected**, never `std::fs`), the project model, `apply_change`. Salsa inputs + tracked queries for incremental recompute. | base, syntax, api | ✅ |
+| `gdscript-hir` | Semantic layer: lower AST → HIR, scope tree, name resolution, gradual type inference, the GDScript warning checks (62 codes and counting). | base, syntax, api, db | ✅ |
 | `gdscript-ide` | The **feature** layer and **public API**: `AnalysisHost` + immutable `Analysis`, one method per IDE feature, POD results. **The crate external Rust consumers depend on, and the wasm-check target.** | all above | ✅ |
-| `gdscript-scene` | `.tscn`/`.tres` parser; node-tree model for path typing (Phase 4). | base | ✅ |
-| `gdscript-ffi` | The **only** crate with napi/wasm glue. napi-rs v3 → a Node `.node` addon **and** a `wasm32` build from one source. Holds an `AnalysisHandle`; JSON in / JSON out. `publish = false`. | ide | n/a (is the binding) |
-| `gdscript-lsp` | A real, standalone LSP server binary. The only place that knows `lsp-types`/JSON-RPC. (Phase 5.) | ide | native |
-| `gdscript-cli` | `check`/`lint`/`format`/`symbols` for CI. (Phase 5.) | ide | native |
+| `gdscript-session` | Internal URI-keyed layer over `gdscript-ide` → `serde_json::Value` results (document lifecycle, JSON serialization). Unit-tested natively; **not** a stable API — consumers depend on `gdscript-ide`. Shared by the napi and wasm bindings so they can't drift apart. | ide | ✅ |
+| `gdscript-ffi` | The napi-rs v3 Node binding (`@gdscript-analyzer/core`) — a thin `#[napi]` delegator over `gdscript-session`. `publish = false` (packaged via `bindings/node`). | session | n/a (is the binding) |
+| `gdscript-wasm` (`bindings/wasm`) | The wasm-bindgen browser binding (`@gdscript-analyzer/wasm`) — a thin `#[wasm_bindgen]` delegator over `gdscript-session`. | session | n/a (is the binding) |
+| `gdscript-lsp` | A real, standalone, spec-compliant LSP server binary. The only place that knows `lsp-types`/JSON-RPC. `publish = false`. | ide | native |
+| `gdscript-cli` | `check`/`lint`/`format`/`symbols` for CI/pre-commit. `publish = false`. | ide | native |
 | `xtask` | Build automation: `codegen-api`, `fixtures`, `dist`, `release` helpers, the local `ci` gate. | — | native |
 
 ## Dependency direction
 
 ```text
-base ◀── syntax ◀── db ◀── hir ◀── ide ◀── ffi ◀── (bindings: node, wasm)
-  ▲         ▲       ▲       ▲       ▲  ◀── lsp
-  └── api ──┘───────┘───────┘       └── cli
-  base ◀── scene
+base ◀── syntax ◀── db ◀── hir ◀── ide ◀── session ◀── ffi ◀── (bindings/node)
+  ▲         ▲       ▲       ▲       ▲          └────── wasm ◀── (bindings/wasm)
+  ├── api ──┘───────┘───────┘       ├── lsp
+  ├── scene ────────────────────────┘
+  └── fmt ──────────────────────────┘── cli
 ```
 
 A crate may only `use` crates to its left. Adding an upward edge is an
 architectural change and should be questioned in review.
 
-## Phase-0 state
+## Current state
 
-Every crate currently exists as a **stub**: a `lib.rs`/`main.rs` that is (at
-most) a doc comment plus a trivial smoke test, with the correct dependency edges
-and metadata declared in `Cargo.toml`. They compile, lint, test, and (for the
-core crates) pass the wasm portability check — but contain **no domain logic**.
-Features arrive phase by phase per [`plans/ROADMAP.md`](https://github.com/yanivkalfa/gdscript-analyzer/blob/master/plans/ROADMAP.md).
+Every crate above is real, shipped code — not a stub. The core crates compile,
+lint, test, and pass the wasm portability check with substantial domain logic
+behind them (parsing, inference, warnings, formatting, scene typing,
+incremental recompute); `gdscript-ffi`/`gdscript-wasm`/`gdscript-lsp`/`gdscript-cli`
+are published binaries/packages. See [`CLAUDE.md`](https://github.com/yanivkalfa/gdscript-analyzer/blob/master/CLAUDE.md)
+and [`plans/ROADMAP.md`](https://github.com/yanivkalfa/gdscript-analyzer/blob/master/plans/ROADMAP.md) for the current
+phase-by-phase status.
 
 ## Publishing note
 
 Internal crate names use the `gdscript-` prefix. The public Rust crate is
 `gdscript-ide`. The npm scope is `@gdscript-analyzer/*`. Non-library crates
-(`gdscript-ffi`, `gdscript-lsp`, `gdscript-cli`, the bindings) carry
-`publish = false` until they are ready (Phase 5 for the binaries).
+(`gdscript-ffi`, `gdscript-session`, `gdscript-lsp`, `gdscript-cli`, the
+bindings) carry `publish = false` — they ship as binaries or npm packages
+instead of crates.io crates.
