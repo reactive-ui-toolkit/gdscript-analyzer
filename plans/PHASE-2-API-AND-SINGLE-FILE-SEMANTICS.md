@@ -1,6 +1,6 @@
 # PHASE 2 — API + Single-File Semantics (Tier 1) — ★ THE MVP ★
 
-> **Status:** plan. **Tier:** 1 (single-file inference). **Completes:** the MVP.
+> **Status:** ✅ **COMPLETE** — shipped; the MVP exit bar is met. This doc is the design plan; see [`PHASE-2-IMPLEMENTATION-PLAYBOOK.md`](PHASE-2-IMPLEMENTATION-PLAYBOOK.md) for the as-built record. **Tier:** 1 (single-file inference). **Completes:** the MVP.
 > **Canonical parents this doc obeys:** [`01-ARCHITECTURE.md`](01-ARCHITECTURE.md) (§1 crate stack, §2 the `AnalysisHost`/`Analysis` API, §5 data model, §7 portability), [`ROADMAP.md`](ROADMAP.md) (Phase 2 deliverable + exit criteria, Tier 1).
 > **Primary evidence:** [`research/09-type-system-and-inference.md`](research/09-type-system-and-inference.md) (HIR/binder/checker, gradual typing, the `UNSAFE_*` family), [`research/04-gdscript-semantics-and-features.md`](research/04-gdscript-semantics-and-features.md) (name resolution, the 48 warnings, the LSP feature set), [`research/03-godot-api-sync.md`](research/03-godot-api-sync.md) (the `extension_api.json` model the type layer consumes), [`GODOT-SYNC.md`](GODOT-SYNC.md) (the gdscript-api data pipeline; produced in Phase 0).
 
