@@ -49,21 +49,27 @@ See [`plans/00-VISION-AND-SCOPE.md`](plans/00-VISION-AND-SCOPE.md) for the full 
 
 ---
 
-## Status — `0.1.0`, published and working
+## Status — `0.5.x`, feature-complete through Phase 6, hardening toward `1.0`
 
 Everything below is **live**: `cargo add`-able, `npm i`-able, and exercised in
 the [playground](https://yanivkalfa.github.io/gdscript-analyzer/playground/).
 
 **Works today** (try the playground): headless GDScript analysis — **parse + type
-diagnostics**, **type-aware hover** (gradual type inference), **completion**, plus
-the full LSP-grade query surface (document/workspace symbols, go-to-definition,
-find-references, rename, signature help, folding ranges, inlay hints, code
-actions), and the **Godot 4.x engine model** (classes, methods, signals, enums)
-loaded from `extension_api.json`.
+diagnostics** with Godot-matching messages, **type-aware hover** (gradual type
+inference), **completion**, the full LSP-grade query surface (document/workspace
+symbols, go-to-definition, find-references, rename, signature help, folding
+ranges, inlay hints, code actions, semantic tokens), the **Godot 4.x engine
+model** (classes, methods, signals, enums) loaded from `extension_api.json`,
+**scene-aware node-path typing** (`$Path`/`%Unique`/`get_node()` resolved against
+the owning `.tscn`), and a **`gdformat`-compatible formatter** wired into the CLI
+and LSP. It also ships a standalone `gdscript-lsp` server, a `gdscript` CLI, and
+project-wide/cross-file navigation backed by an incremental (salsa) query engine.
 
-**Growing across the `0.x` line:** the complete GDScript warning catalog, a
-`gdformat`-compatible formatter, deeper control-flow narrowing, and performance
-hardening for large projects. Track it in [`plans/ROADMAP.md`](plans/ROADMAP.md).
+**Ongoing on the `0.x` line, tracked toward `1.0`:** rounding out the full Godot
+warning catalog and the control-flow-narrowing precision tail (each additive, no
+API break), plus the `1.0` API freeze itself. None of this blocks day-to-day use.
+Track it in [`plans/ROADMAP.md`](plans/ROADMAP.md) and the itemized backlog in
+[`TECH_DEBT.md`](TECH_DEBT.md).
 
 ---
 
@@ -159,7 +165,7 @@ The engine knowledge (classes, methods, signals, enums, builtins) is sourced fro
 Godot's `extension_api.json` and class documentation, vendored per version and
 kept in sync with Godot releases automatically.
 
-- **First bundled version: Godot `4.5-stable`.**
+- **Bundled versions: Godot `4.5-stable` and `4.7-stable` — default `4.7-stable`.**
 
 See [`plans/GODOT-SYNC.md`](plans/GODOT-SYNC.md) for the multi-version policy.
 
