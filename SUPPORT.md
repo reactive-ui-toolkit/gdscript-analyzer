@@ -2,9 +2,11 @@
 
 Need help with `gdscript-analyzer`? Here is where to go.
 
-> **Project status:** Phase 0 (ecosystem & tooling) — the repository compiles
-> and releases, but there are **no analyzer features yet**. See
-> [`plans/ROADMAP.md`](plans/ROADMAP.md) for what is coming.
+> **Project status:** feature-complete through Phase 6 (`0.5.x`, published on
+> crates.io + npm) — parsing, type-aware hover/completion, the full LSP-grade
+> query surface, scene-aware node-path typing, and a `gdformat`-compatible
+> formatter are all live. See [`plans/ROADMAP.md`](plans/ROADMAP.md) for what's
+> still ahead (rounding out the warning catalog and the `1.0` API freeze).
 
 ## Where to ask
 

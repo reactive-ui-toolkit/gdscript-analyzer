@@ -22,11 +22,11 @@ napi binding, and a wasm playground.
 
 | Workstream | What it delivers | Status |
 |---|---|---|
-| **W1 — warning set** | The full Godot warning catalog behind an emit-then-gate seam (`WarningCode` + `gate()`), project-setting gating, and `@warning_ignore[_start\|_restore]`. | Gate seam + a self-contained-check subset landed; the rest of the 48 codes are additive (tracked in `TECH_DEBT.md`). |
+| **W1 — warning set** | The full Godot warning catalog behind an emit-then-gate seam (`WarningCode` + `gate()`), project-setting gating, and `@warning_ignore[_start\|_restore]`. | Gate seam + most of the catalog landed (62 codes shipped); a handful of checks remain additive by design (tracked in `TECH_DEBT.md`). |
 | **W2 — flow narrowing** | A real per-body control-flow dataflow: `is`/`!= null`/early-return/`and`-`or`/`else` narrowing that **beats the engine** on `is`-guards ([#93510](https://github.com/godotengine/godot/issues/93510)), plus reachability. | Landed (CFG + checker wiring + short-circuit + `UNREACHABLE_CODE`); match-arm narrowing + loop fixpoints deferred post-1.0. |
-| **W3 — formatter** | A `gdscript-fmt` crate: `format` / `format_range` with idempotence + semantics-preservation, wired into the CLI and LSP. | In progress. |
-| **W4 — performance** | A tiered perf fixture corpus + criterion benches (cold / warm-keystroke / completion), memory profiling, and CI size/latency guards. | In progress. |
-| **W5 — docs** | A generated warning reference (from the `WarningCode` catalog), a Configuration page, the contract page, and CI-built examples. | In progress. |
+| **W3 — formatter** | A `gdscript-fmt` crate: `format` / `format_range` with idempotence + semantics-preservation, wired into the CLI and LSP. | Landed — ~100% byte-exact `gdformat` parity on the reference corpus; a couple of cosmetic reflow cases remain (`TECH_DEBT.md`). |
+| **W4 — performance** | A tiered perf fixture corpus + criterion benches (cold / warm-keystroke / completion), memory profiling, and CI size/latency guards. | Landed locally (cold + warm-keystroke benches show flat incremental cost); CI-service-gated regression guards (CodSpeed/dhat) deferred. |
+| **W5 — docs** | A generated warning reference (from the `WarningCode` catalog), a Configuration page, the contract page, and CI-built examples. | Landed (warning reference, Configuration page, per-crate READMEs, doctests, this book); the contract page is intentionally reserved for W6. |
 | **W6 — API freeze** | `#[non_exhaustive]` on the consumer-matched types, a PR-time + release-time semver gate, and the published 1.0 contract. | Held for last (irreversible — see the execution overview). |
 | **W7 — ecosystem** | Labels-as-code, issue forms, this roadmap, the [ADR](./adr/README.md) + RFC process ([ADR-0004](./adr/0004-rfc-graduation-trigger.md)). | Landed. |
 

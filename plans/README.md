@@ -55,4 +55,9 @@ All claims in this plan trace to these cited notes:
 
 ---
 
-*Status: planning. No library code written yet. This plan is the source of truth for sequencing the build.*
+*Status: Phases 0–6 have shipped their core scope (`0.5.x` on crates.io + npm);
+the analyzer is feature-complete through Phase 6. This directory remains the
+source of truth for sequencing decisions and the as-built execution record —
+see [`ROADMAP.md`](ROADMAP.md) for the current phase-by-phase status and
+[`TECH_DEBT.md`](../TECH_DEBT.md) for the itemized, honest remaining backlog
+(mostly additive checks + the deliberately-last `1.0` API freeze).*

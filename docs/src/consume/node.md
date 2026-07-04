@@ -1,7 +1,8 @@
 # Consuming from Node
 
-> **Status:** the binding structure exists as an empty stub in Phase 0; the
-> real surface is wired in **Phase 1+** ([`plans/ROADMAP.md`](https://github.com/yanivkalfa/gdscript-analyzer/blob/master/plans/ROADMAP.md)).
+> **Status: live.** `@gdscript-analyzer/core` is published and this is its real,
+> shipped surface ([`plans/ROADMAP.md`](https://github.com/yanivkalfa/gdscript-analyzer/blob/master/plans/ROADMAP.md)
+> tracks what's still ahead on the road to `1.0`).
 
 Node consumers install the napi-rs native addon:
 
@@ -19,40 +20,53 @@ prebuilt binaries (`@gdscript-analyzer/core-linux-x64-gnu`, `-darwin-arm64`,
 
 ## napi vs wasm
 
-There is **one binding crate** — `gdscript-ffi` — and napi-rs v3 compiles it to
-*both* a Node native addon and a `wasm32` target from the same source. For
-Node you almost always want the **native addon** (this package): it is faster,
-has no `SharedArrayBuffer`/COOP-COEP requirements, and reads files on the host
-side. Reach for the [wasm package](./browser.md) only for the browser or for a
+There are **two thin binding crates** sharing one engine-neutral core
+(`gdscript-session`, a URI-keyed session over `gdscript-ide`): `gdscript-ffi`
+(napi-rs v3 → the Node native addon you're reading about here) and
+`gdscript-wasm` (wasm-bindgen → the [browser package](./browser.md)). Sharing
+`gdscript-session` means the two surfaces can't drift apart — only the thin
+`#[napi]`/`#[wasm_bindgen]` delegation differs. For Node you almost always want
+the **native addon** (this package): it is faster, has no
+`SharedArrayBuffer`/COOP-COEP requirements, and reads files on the host side.
+Reach for the [wasm package](./browser.md) only for the browser or a
 sandboxed/edge runtime where a native addon can't load. See
-[ADR-0003](../adr/0003-napi-rs-v3-dual-target.md).
+[ADR-0003](../adr/0003-napi-rs-v3-dual-target.md) for the original binding
+decision and its amendment.
 
-## The shape across the boundary (forthcoming)
+## The shape across the boundary
 
-The binding keeps a **stateful `AnalysisHandle`** alive inside Rust so the
-analysis cache survives edits. The JS side pushes changes and runs queries;
-results come back as **JSON POD** (serde). The surface is intentionally small
-and flat — strings and structs cross the boundary *by copy*, so a query returns
-only its feature result, never a whole AST.
+The binding keeps a **stateful, URI-keyed session** alive inside Rust so the
+analysis cache survives edits. The JS side opens/changes/closes documents by
+URI and runs queries by URI + byte offset; results come back as **native JS
+objects** (via napi's `serde_json::Value` bridge — no client-side
+`JSON.parse`). The surface is intentionally small and flat — strings and
+structs cross the boundary *by copy*, so a query returns only its feature
+result, never a whole AST.
 
 ```js
-// Illustrative — API lands in Phase 1+.
 import { AnalysisHandle } from "@gdscript-analyzer/core";
 
-const host = new AnalysisHandle();
-host.applyChange({
-  fileId: 0,
-  text: "extends Node\n\nfunc _ready() -> void:\n\tprint(1 + 1)\n",
-});
+const az = new AnalysisHandle();
+az.openDocument(
+  "inmemory://player.gd",
+  "extends Node\n\nfunc _ready() -> void:\n\tprint(1 + 1)\n",
+  "res://player.gd", // optional res:// path, or null
+);
 
-// Byte offsets in; POD JSON out. The client maps byte offsets -> UTF-16.
-const diagnostics = host.diagnostics(0);
-const symbols = host.documentSymbols(0);
-console.log(symbols);
+// Byte offsets in; native JS objects out. The client maps byte offsets -> UTF-16.
+const diagnostics = az.diagnostics("inmemory://player.gd");
+const symbols = az.documentSymbols("inmemory://player.gd");
+const hover = az.hover("inmemory://player.gd", 42);
+console.log(diagnostics, symbols, hover);
 ```
 
-A stateless one-shot `analyze(files) -> Report` is also provided for CLI/CI use
-where you don't need an incremental cache.
+`AnalysisHandle` also exposes `changeDocument`/`closeDocument`,
+`setProjectConfig`/`setWorkspaceComplete`/`setWarningOverride`, and one method
+per IDE feature (`completions`, `signatureHelp`, `codeActions`,
+`gotoDefinition`, `findReferences`, `rename`, `workspaceSymbols`,
+`semanticTokens`, `foldingRanges`, `inlayHints`, `format`, `formatRange`,
+`syntaxTree`) — see the [Node package README](https://github.com/yanivkalfa/gdscript-analyzer/blob/master/bindings/node/README.md)
+for the full, current list.
 
 ## Position encoding (the footgun)
 
