@@ -610,7 +610,7 @@ checksum = "3489a9e7463353467db3cfe3eb12de31c9b6200e4f928bde4959bf5db5b31d2f"
 
 [[package]]
 name = "gdscript-api"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "gdscript-base",
  "rkyv",
@@ -619,14 +619,14 @@ dependencies = [
 
 [[package]]
 name = "gdscript-base"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "gdscript-cli"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "annotate-snippets",
  "anyhow",
@@ -642,7 +642,7 @@ dependencies = [
 
 [[package]]
 name = "gdscript-db"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "dashmap",
  "gdscript-api",
@@ -655,7 +655,7 @@ dependencies = [
 
 [[package]]
 name = "gdscript-ffi"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "gdscript-session",
  "napi",
@@ -666,7 +666,7 @@ dependencies = [
 
 [[package]]
 name = "gdscript-fmt"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "cstree",
  "gdscript-base",
@@ -675,7 +675,7 @@ dependencies = [
 
 [[package]]
 name = "gdscript-gdext"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "gdscript-session",
  "godot",
@@ -684,7 +684,7 @@ dependencies = [
 
 [[package]]
 name = "gdscript-hir"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "cstree",
  "gdscript-api",
@@ -701,7 +701,7 @@ dependencies = [
 
 [[package]]
 name = "gdscript-ide"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "criterion",
  "cstree",
@@ -719,7 +719,7 @@ dependencies = [
 
 [[package]]
 name = "gdscript-lsp"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
@@ -734,7 +734,7 @@ dependencies = [
 
 [[package]]
 name = "gdscript-scene"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "gdscript-base",
  "rustc-hash",
@@ -743,7 +743,7 @@ dependencies = [
 
 [[package]]
 name = "gdscript-session"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "gdscript-base",
  "gdscript-ide",
@@ -754,7 +754,7 @@ dependencies = [
 
 [[package]]
 name = "gdscript-syntax"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "cstree",
  "expect-test",
@@ -768,7 +768,7 @@ dependencies = [
 
 [[package]]
 name = "gdscript-wasm"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "console_error_panic_hook",
  "gdscript-session",
@@ -2180,7 +2180,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "xtask"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "gdscript-api",
