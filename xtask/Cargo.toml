@@ -21,7 +21,7 @@ gdscript-api = { path = "../crates/gdscript-api", default-features = false }
 rkyv = { workspace = true }
 # Codegen-time only: parse the vendored Godot doc XML into the hover-doc store. A pure-Rust DOM
 # parser; never reaches the analyzer runtime or wasm.
-roxmltree = "0.20"
+roxmltree = "0.21"
 
 [lints]
 workspace = true
