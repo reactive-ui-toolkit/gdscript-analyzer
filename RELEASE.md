@@ -15,6 +15,7 @@ is just "merge a PR."
 | 3 | **`@gdscript-analyzer/wasm`** (the browser build) | **npm** | `release-wasm.yml` |
 | 4 | **`gdscript` + `gdscript-lsp`** binaries (archives + install scripts) | **GitHub Release** | `release.yml` (cargo-dist) |
 | 5 | The mdBook (`/`) + the playground (`/playground/`) | **GitHub Pages** | `pages.yml` |
+| 6 | **`reactive-ui-analyzer-<version>.zip`** — the Godot GDExtension addon (per-OS `gdscript-gdext` libraries + descriptor) | **GitHub Release** (asset) | `release-gdext.yml` |
 
 > **It is NOT one publish per package.** Each *registry* has **one** workflow:
 > - crates.io: one `release-plz` run publishes **all 7 crates** (in dependency order).
@@ -22,9 +23,12 @@ is just "merge a PR."
 >   sub-packages**.
 > - npm wasm: one `release-wasm` run publishes `wasm`.
 > - binaries: one `dist` run publishes **both** binaries.
+> - Godot addon: one `release-gdext` run builds Windows x86_64 + Linux x86_64/arm64 + macOS
+>   universal, assembles the `addons/reactive_ui_analyzer/` zip, and attaches it to the SAME
+>   GitHub Release dist created (it polls for the release, then uploads).
 >
 > And **one tag drives all of them.** When you merge the Release PR, `release-plz` pushes the
-> `v0.1.0` tag, and that single tag fires #2, #3, and #4 in parallel. (#1 and #5 run on the
+> `v0.1.0` tag, and that single tag fires #2, #3, #4, and #6 in parallel. (#1 and #5 run on the
 > push-to-master itself.)
 
 The crates carrying `publish = false` (`gdscript-cli`, `-ffi`, `-lsp`, `-session`, `-wasm`) are

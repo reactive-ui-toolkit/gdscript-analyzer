@@ -82,7 +82,7 @@ jobs:
           tool: cargo-hack
       # Exclude the FFI bindings: `gdscript-ffi` (napi) floors at 1.88 but needs
       # libnode to build, and `gdscript-wasm` builds only on wasm32.
-      - run: cargo hack check --rust-version --workspace --exclude gdscript-ffi --exclude gdscript-wasm
+      - run: cargo hack check --rust-version --workspace --exclude gdscript-ffi --exclude gdscript-wasm --exclude gdscript-gdext
 
   wasm:
     name: wasm portability guard
@@ -123,6 +123,23 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # Compiles tree-sitter-gdscript's C parser (cc) — native-only, feature-gated.
       - run: cargo test -p gdscript-syntax --features tree-sitter-oracle --test differential
+
+  gdext:
+    name: gdext binding (build + clippy)
+    runs-on: ubuntu-latest
+    needs: fmt
+    # Unlike the napi/wasm bindings, the gdext crate compiles NATIVELY on the host, so this is a
+    # BLOCKING gate: build + clippy -D warnings. Behavior is covered end-to-end by the
+    # reactive_ui_editor headless suite in ReactiveUI-Godot (gdext builtins need a live engine, so
+    # there is nothing meaningful to `cargo test` here).
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: gdext-check
+      - run: cargo build -p gdscript-gdext
+      - run: cargo clippy -p gdscript-gdext --all-targets -- -D warnings
 
   bindings:
     name: bindings demo (node + browser)

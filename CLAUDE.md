@@ -46,6 +46,7 @@ gdscript-base                POD types (FileId, TextRange, LineIndex, query resu
              └ gdscript-session   internal URI-keyed layer → serde_json::Value (NOT a stable API)
                 ├ gdscript-ffi   Node addon (napi-rs)     → @gdscript-analyzer/core
                 └ gdscript-wasm  browser (wasm-bindgen)   → @gdscript-analyzer/wasm
+                └ gdscript-gdext Godot GDExtension (gdext) → reactive-ui-analyzer addon zip
 gdscript-lsp   standalone LSP server  ┐ native clients of gdscript-ide
 gdscript-cli   `gdscript` CLI         ┘ (not in the wasm32 gate)
 ```

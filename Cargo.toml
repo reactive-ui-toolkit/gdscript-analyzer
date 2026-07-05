@@ -3,7 +3,7 @@
 
 [workspace]
 resolver = "3"
-members = ["crates/*", "bindings/wasm", "xtask"]
+members = ["crates/*", "bindings/wasm", "bindings/gdext", "xtask"]
 # The two FFI bindings build on their own targets, not the host: `gdscript-ffi` (napi)
 # needs the @napi-rs/cli to provision `libnode.dll` on Windows, and `gdscript-wasm`
 # targets `wasm32-unknown-unknown` via wasm-pack. Excluding them from default-members
