@@ -1,0 +1,171 @@
+name: release-gdext
+
+# Build + package the Godot GDExtension binding (`bindings/gdext`) as the `reactive_ui_analyzer`
+# Godot addon zip, and attach it to the version's GitHub Release.
+#
+# Fires when release-plz pushes a `v<version>` tag (same trigger as release-napi/wasm/dist). The
+# GitHub Release itself is CREATED by dist (release.yml) on that tag — this workflow only UPLOADS
+# to it, waiting for it to exist first. Also `workflow_dispatch` for a build-only check (the zip
+# lands as a workflow artifact instead of a release asset).
+#
+# Matrix note: linux-arm64 builds NATIVELY on the public `ubuntu-24.04-arm` runners; macOS builds
+# both architectures on one runner and `lipo`s them into a single universal dylib (unsigned — the
+# addon README documents the quarantine step). Every leg strips symbols via RUSTFLAGS, scoped to
+# this workflow so the dist/napi builds keep their own profiles.
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-gdext-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUSTFLAGS: -C strip=symbols
+
+jobs:
+  build:
+    name: build (${{ matrix.settings.label }})
+    runs-on: ${{ matrix.settings.host }}
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - host: windows-latest
+            label: windows-x86_64
+            target: x86_64-pc-windows-msvc
+            source: target/x86_64-pc-windows-msvc/release/gdscript_gdext.dll
+            output: gdscript_gdext.windows.x86_64.dll
+          - host: ubuntu-latest
+            label: linux-x86_64
+            target: x86_64-unknown-linux-gnu
+            source: target/x86_64-unknown-linux-gnu/release/libgdscript_gdext.so
+            output: libgdscript_gdext.linux.x86_64.so
+          - host: ubuntu-24.04-arm
+            label: linux-arm64
+            target: aarch64-unknown-linux-gnu
+            source: target/aarch64-unknown-linux-gnu/release/libgdscript_gdext.so
+            output: libgdscript_gdext.linux.arm64.so
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust + target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.settings.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: gdext-${{ matrix.settings.target }}
+      - name: Build
+        run: cargo build -p gdscript-gdext --release --target ${{ matrix.settings.target }}
+      - name: Stage under the descriptor's library name
+        shell: bash
+        run: |
+          mkdir -p staged
+          cp "${{ matrix.settings.source }}" "staged/${{ matrix.settings.output }}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gdext-${{ matrix.settings.label }}
+          path: staged/*
+          if-no-files-found: error
+
+  build-macos:
+    name: build (macos-universal)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust + both Apple targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: gdext-macos-universal
+      - name: Build both architectures
+        run: |
+          cargo build -p gdscript-gdext --release --target x86_64-apple-darwin
+          cargo build -p gdscript-gdext --release --target aarch64-apple-darwin
+      - name: Lipo into a universal dylib
+        run: |
+          mkdir -p staged
+          lipo -create \
+            target/x86_64-apple-darwin/release/libgdscript_gdext.dylib \
+            target/aarch64-apple-darwin/release/libgdscript_gdext.dylib \
+            -output staged/libgdscript_gdext.macos.universal.dylib
+          lipo -info staged/libgdscript_gdext.macos.universal.dylib
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gdext-macos-universal
+          path: staged/*
+          if-no-files-found: error
+
+  package:
+    name: package + attach addon zip
+    needs: [build, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # gh release upload
+    steps:
+      - uses: actions/checkout@v7
+      - name: Assemble the addon folder
+        run: |
+          STAGE="stage/addons/reactive_ui_analyzer"
+          mkdir -p "$STAGE"
+          cp -r bindings/gdext/addon/reactive_ui_analyzer/. "$STAGE/"
+          rm -f "$STAGE/bin/.gitkeep"
+          cp LICENSE-MIT LICENSE-APACHE "$STAGE/"
+      - name: Download all built libraries
+        uses: actions/download-artifact@v7
+        with:
+          pattern: gdext-*
+          merge-multiple: true
+          path: stage/addons/reactive_ui_analyzer/bin
+      - name: Verify every descriptor library is present
+        run: |
+          cd stage/addons/reactive_ui_analyzer
+          missing=0
+          # Every file the .gdextension names must exist, or Godot fails the load on that platform.
+          for f in $(grep -oP '"bin/[^"]+"' gdscript_analyzer.gdextension | tr -d '"' | sort -u); do
+            if [ ! -f "$f" ]; then echo "::error::missing library: $f"; missing=1; fi
+          done
+          [ "$missing" -eq 0 ]
+          ls -la bin/
+      - name: Determine version
+        id: ver
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            VER=$(grep -oP '^version = "\K[^"]+' Cargo.toml | head -1)
+            echo "version=$VER" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Zip (rooted at addons/ so it unzips straight into a project)
+        run: |
+          cd stage
+          zip -r "../reactive-ui-analyzer-${{ steps.ver.outputs.version }}.zip" addons
+      - uses: actions/upload-artifact@v7
+        with:
+          name: reactive-ui-analyzer-addon
+          path: reactive-ui-analyzer-*.zip
+          if-no-files-found: error
+      # dist (release.yml) creates the GitHub Release on this same tag; poll until it exists, then
+      # attach. --clobber makes tag-run retries idempotent.
+      - name: Attach to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          for i in $(seq 1 60); do
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              break
+            fi
+            echo "release $TAG not created yet (dist owns creation) — waiting ($i/60)…"
+            sleep 15
+          done
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+          gh release upload "$TAG" reactive-ui-analyzer-*.zip --clobber --repo "$GITHUB_REPOSITORY"

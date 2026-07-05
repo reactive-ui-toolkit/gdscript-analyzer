@@ -1,0 +1,35 @@
+# gdscript-gdext — the Godot GDExtension binding of gdscript-analyzer.
+#
+# Same shape as the napi (`gdscript-ffi`) and wasm (`gdscript-wasm`) bindings: a thin delegator
+# over the fully-tested `gdscript-session` core, exposing one Godot-callable method per Session
+# method. Not on crates.io (distributed as prebuilt per-OS libraries + a Godot addon zip via the
+# `release-gdext` workflow) and not in `default-members`: it pulls the full `godot` codegen and is
+# behavior-tested end-to-end inside a real Godot editor (the reactive_ui_editor headless suite),
+# since gdext builtin types (Variant/Dictionary) cannot be constructed outside a live engine.
+[package]
+name = "gdscript-gdext"
+description = "Godot GDExtension binding surface for gdscript-analyzer — the in-editor native library over gdscript-ide."
+version.workspace = true
+edition.workspace = true
+readme = "README.md"
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# All real logic lives in the pure-Rust, fully-tested `gdscript-session`; this crate is a thin
+# #[func] delegator plus one bespoke shim (serde_json::Value -> Godot Variant — there is no
+# built-in serde<->Variant bridge in gdext).
+gdscript-session = { workspace = true }
+serde_json = { workspace = true }
+# api-4-4 = the compatibility FLOOR (matches the reactive_ui_editor addon's Godot 4.4+ requirement
+# and the .gdextension descriptor's compatibility_minimum). The binding uses only ubiquitous
+# builtins (RefCounted/String/Dictionary/Array), so a floor build runs on every later 4.x.
+godot = { version = "0.5", features = ["api-4-4"] }
+
+[lints]
+workspace = true

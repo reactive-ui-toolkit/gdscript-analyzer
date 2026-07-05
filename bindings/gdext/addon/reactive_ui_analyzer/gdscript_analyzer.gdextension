@@ -1,0 +1,24 @@
+; GDExtension descriptor for the gdscript-analyzer native binding (class: GdscriptAnalyzer).
+;
+; reloadable = false is deliberate: gdext's live-reload path is documented-unstable, and this
+; library is a load-once analysis backend — upgrading the analyzer means restarting the editor,
+; never hot-swapping a .dll under a live session.
+;
+; Both `debug` and `release` feature keys point at the SAME optimized library: the editor runs
+; with the `debug` feature tag, exported release games with `release`; we ship one prebuilt
+; optimized binary per platform (there is no debug-instrumented distribution).
+
+[configuration]
+entry_symbol = "gdext_rust_init"
+compatibility_minimum = "4.4"
+reloadable = false
+
+[libraries]
+windows.debug.x86_64 = "bin/gdscript_gdext.windows.x86_64.dll"
+windows.release.x86_64 = "bin/gdscript_gdext.windows.x86_64.dll"
+linux.debug.x86_64 = "bin/libgdscript_gdext.linux.x86_64.so"
+linux.release.x86_64 = "bin/libgdscript_gdext.linux.x86_64.so"
+linux.debug.arm64 = "bin/libgdscript_gdext.linux.arm64.so"
+linux.release.arm64 = "bin/libgdscript_gdext.linux.arm64.so"
+macos.debug = "bin/libgdscript_gdext.macos.universal.dylib"
+macos.release = "bin/libgdscript_gdext.macos.universal.dylib"
