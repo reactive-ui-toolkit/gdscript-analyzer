@@ -56,6 +56,10 @@ name    = "gdscript-wasm"
 publish = false
 
 [[package]]
+name    = "gdscript-gdext"
+publish = false
+
+[[package]]
 name    = "gdscript-cli"
 publish = false
 
