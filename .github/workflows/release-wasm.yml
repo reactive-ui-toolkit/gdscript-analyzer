@@ -45,7 +45,7 @@ jobs:
           npm pkg set name='@gdscript-analyzer/wasm'
           npm pkg set publishConfig.access='public'
           npm pkg set publishConfig.provenance=true --json
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           registry-url: "https://registry.npmjs.org" # writes .npmrc (required for provenance)
