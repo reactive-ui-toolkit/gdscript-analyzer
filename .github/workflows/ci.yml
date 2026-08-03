@@ -77,7 +77,7 @@ jobs:
           toolchain: 1.88.0
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo-hack
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.85.5
         with:
           tool: cargo-hack
       # Exclude the FFI bindings: `gdscript-ffi` (napi) floors at 1.88 but needs
@@ -166,7 +166,7 @@ jobs:
           node hello.mjs
       # Browser path: package the wasm-bindgen binding with wasm-pack.
       - name: install wasm-pack
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.85.5
         with:
           tool: wasm-pack
       - name: build browser package
@@ -187,7 +187,7 @@ jobs:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.85.5
         with:
           tool: cargo-llvm-cov
       - name: Generate coverage
@@ -207,7 +207,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Install cargo-deny
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.85.5
         with:
           tool: cargo-deny
       - run: cargo deny check

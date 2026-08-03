@@ -25,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Install mdbook + mdbook-linkcheck
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.85.5
         with:
           # Pinned: mdbook 0.5 breaks mdbook-linkcheck 0.7.7; 0.4.40 is supported.
           tool: mdbook@0.4.40,mdbook-linkcheck@0.7.7
